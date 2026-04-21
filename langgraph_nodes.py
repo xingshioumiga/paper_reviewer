@@ -3,6 +3,62 @@ import random
 
 from langgraph_state import GraphState, HistoryItem, Issue
 from paper_reviewer_tool import split_into_sections
+from langchain_core.output_parsers import StrOutputParser
+
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+
+
+# --- 初始化本地 Ollama 驱动的 Qwen2.5---reviewer ---
+llm_ini_reviewer = ChatOpenAI(
+    model="qwen2.5:14b",
+    openai_api_key="ollama",
+    base_url="http://localhost:11434/v1",
+    temperature=0.1 # 建议低随机性，保证评审结果严谨
+)
+
+# --- 初始化本地 Ollama 驱动的 Qwen2.5---editor ---
+llm_ini_editor = ChatOpenAI(
+    model="qwen2.5:14b",
+    openai_api_key="ollama",
+    base_url="http://localhost:11434/v1",
+    temperature=0.7 # 建议中随机性，保证编辑结果流畅
+)
+
+# --- 初始化本地 Ollama 驱动的 Qwen2.5---critic ---
+llm_ini_critic = ChatOpenAI(
+    model="qwen2.5:14b",
+    openai_api_key="ollama",
+    base_url="http://localhost:11434/v1",
+    temperature=0. # 温度将为0，保证评分结果严谨
+)
+
+# 定义一个容器，方便 LLM 一次性返回多个 Issue，结构化输出
+class ReviewOutput(BaseModel):
+    issues: List[Issue] = Field(description="段落中发现的问题列表")
+# 创建结构化链reviewer
+llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
+
+
+# 定义一个容器，方便 LLM 一次性返回优化后的 LaTeX 段落内容，结构化输出
+class EditorOutput(BaseModel):
+    refined_latex: str = Field(
+        description="完全优化后的 LaTeX 段落内容。要求：严禁包含任何 Markdown 标签、解释文字或开场白。"
+    )
+# 创建结构化链editor
+llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
+
+
+# 定义一个容器，方便 LLM 一次性返回评分结果，结构化输出
+class ScoreOutput(BaseModel):
+    score: float = Field(description="0到1之间的浮点数评分，0.9表示完美，0.5表示无改进")
+#创建结构化链
+llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
+
 
 # ===== 需要你已有的定义 =====
 # Section, Issue, HistoryItem, GraphState
@@ -56,6 +112,57 @@ def reviewer_node(state: GraphState) -> GraphState:
     )
     return state
 
+#LLM版本---------------------------------------------------------------
+def reviewer_node_llm(state: GraphState) -> GraphState:
+    # 获取当前要处理的 section
+    section = state.sections[state.current_section_index]
+
+    # 定义针对学术论文和 LaTeX 格式的 Prompt
+    # 这里我针对大哥你的研究领域，加强了对公式和逻辑的审查要求
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "你是一位顶尖物理学期刊的资深审稿人，同时也是 LaTeX 专家。"
+            "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
+            "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
+            "请保持专业、严谨的态度。"
+        )),
+        ("human", "标题: {title}\n\n内容:\n{content}")
+    ])
+
+    # 构造链条并执行
+    chain = prompt | llm_structured_reviewer
+    
+    try:
+        # 调用 Qwen2.5 进行审查
+        response = chain.invoke({
+            "title": section.title,
+            "content": section.content
+        })
+        
+        # 将 LLM 返回的问题列表存入 state，并统一打上 section_id 标签
+        issues = []
+        for issue in response.issues:
+            issue.section_id = section.id # 确保 ID 匹配
+            issues.append(issue)
+            
+        state.issues = issues
+
+    except Exception as e:
+        logger.error("reviewer_node 报错了，大哥！错误信息: %s", e)
+        # 如果报错，给个空的 list 防止程序崩掉
+        state.issues = []
+
+    # --- 保持大哥要求的原始日志输出格式 ---
+    logger.info(
+        "reviewer_node: section_id=%s index=%s issues=%s",
+        section.id,
+        state.current_section_index,
+        len(state.issues),
+    )
+    
+    return state
+
+
 
 # =========================
 # 3️⃣ Editor：基于 issues 修改
@@ -93,6 +200,77 @@ def editor_node(state: GraphState):
 
     return state
 
+#LLM版本---------------------------------------------------------------
+def editor_node_llm(state: GraphState):
+    section = state.sections[state.current_section_index]
+    
+    # ✅ 显式过滤：精准锁定当前段落的问题
+    current_section_issues = [
+        i for i in state.issues 
+        if i.section_id == section.id
+    ]
+    
+    # 如果没问题，咱们就不浪费 Ollama 的算力了
+    if not current_section_issues:
+        logger.info("editor_node: section_id=%s no issues to fix, skipping.", section.id)
+        return state
+
+    issues_text = "\n".join([f"- {i.problem}" for i in current_section_issues])
+    
+    # 2. 构建优雅的 ChatPrompt
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", (
+            "你是一位顶尖的 LaTeX 润色专家和物理学学术编辑。"
+            "你的任务是根据提供的问题列表优化 LaTeX 段落。"
+            "要求：\n"
+            "1. 严禁破坏 LaTeX 语法和数学公式。\n"
+            "2. 显著提升学术表达的专业性和流畅度。\n"
+            "3. 只输出修改后的 LaTeX 内容，不要包含任何 Markdown 格式（如 ```latex）或解释文字。"
+        )),
+        ("human", "待修改内容:\n{content}\n\n需要解决的问题:\n{issues}")
+    ])
+
+    # 3. 组成 LCEL 链条：Prompt -> LLM -> 纯文本解析
+    chain = prompt | llm_strucured_editor # | StrOutputParser()
+
+    try:
+        # 4. 执行润色
+        refined_content = chain.invoke({
+            "content": section.content,
+            "issues": issues_text
+        })
+        
+        # 简单清洗，防止 LLM 不听话带上 Markdown 标签
+        refined_content = refined_content.replace("```latex", "").replace("```", "").strip()
+
+        # 更新 state
+        old_content = section.content
+        section.content = refined_content
+        state.sections[state.current_section_index] = section
+        
+        # 记录历史
+        state.history.append(HistoryItem(
+            iteration=state.iteration,
+            section_id=section.id,
+            before=old_content,
+            after=refined_content,
+            score=0.0,
+            accepted=False
+        ))
+
+    except Exception as e:
+        logger.error("editor_node 润色翻车了，大哥！错误: %s", e)
+
+    # 5. 保持大哥要求的日志格式，同时稍微优化了显示精度
+    logger.info(
+        "editor_node: section_id=%s issues_applied=%s history_len=%s",
+        section.id,
+        len(current_section_issues),
+        len(state.history),
+    )
+    
+    return state
+
 
 # =========================
 # 4️⃣ Critic：打分
@@ -105,6 +283,46 @@ def critic_node(state: GraphState) -> GraphState:
 
     return state
 
+
+#LLM版本---------------------------------------------------------------
+def critic_node_llm(state: GraphState) -> GraphState:
+    # 拿到最近的一次修改记录
+    if not state.history:
+        logger.warning("critic_node: No history found to evaluate!")
+        return state
+        
+    last_history = state.history[-1]
+
+    # 3. 使用 ChatPromptTemplate 构建 LCEL 链
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。"),
+        ("human", "修改前: {before}\n\n修改后: {after}")
+    ])
+
+    # 4. 组成威力强大的 Chain
+    chain = prompt | llm_structured_critic
+
+    try:
+        # 执行调用
+        result = chain.invoke({
+            "before": last_history.before,
+            "after": last_history.after
+        })
+        score = result.score
+    except Exception as e:
+        logger.error("critic_node 打分失败: %s", e)
+        score = 0.5  # 报错时的保底分
+
+    state.current_score = score
+
+    # 5. 日志输出（保持风格一致）
+    logger.info(
+        "critic_node: section_id=%s score=%.2f",
+        last_history.section_id,
+        score
+    )
+    
+    return state
 
 # =========================
 # 5️⃣ Aggregator：更新全文 + best + history
