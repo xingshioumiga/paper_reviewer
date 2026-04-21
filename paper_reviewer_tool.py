@@ -4,17 +4,38 @@ from typing import List
 from langgraph_state import Section
 
 
+# def split_into_sections(tex: str) -> List[Section]:
+#     pattern = r"(\\section\{.*?\})"
+#     parts = re.split(pattern, tex)
+
+#     sections = []
+#     for i in range(1, len(parts), 2):
+#         title = parts[i]
+#         content = parts[i+1] if i+1 < len(parts) else ""
+#         sections.append(Section(
+#             id=f"sec_{i}",
+#             title=title,
+#             content=content.strip()
+#         ))
+#     return sections
+
 def split_into_sections(tex: str) -> List[Section]:
     pattern = r"(\\section\{.*?\})"
     parts = re.split(pattern, tex)
 
     sections = []
+    sec_idx = 0  # ✅ 独立计数器
+
     for i in range(1, len(parts), 2):
         title = parts[i]
         content = parts[i+1] if i+1 < len(parts) else ""
+
         sections.append(Section(
-            id=f"sec_{i}",
+            id=f"sec_{sec_idx}",   # ✅ 连续编号
             title=title,
             content=content.strip()
         ))
+
+        sec_idx += 1  # ✅ 手动递增
+
     return sections

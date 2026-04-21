@@ -213,6 +213,15 @@ def editor_node_llm(state: GraphState):
     # 如果没问题，咱们就不浪费 Ollama 的算力了
     if not current_section_issues:
         logger.info("editor_node: section_id=%s no issues to fix, skipping.", section.id)
+        state.history.append(HistoryItem(
+            iteration=state.iteration,
+            section_id=section.id,
+            before=section.content,
+            after=section.content,   # ❗没有修改
+            score=0.0,
+            accepted=False # 没有修改，所以不接受
+        ))#如果没问题，为了保证critic的评分准确，所以需要记录历史
+        
         return state
 
     issues_text = "\n".join([
@@ -312,7 +321,7 @@ def critic_node_llm(state: GraphState) -> GraphState:
 
     # 3. 使用 ChatPromptTemplate 构建 LCEL 链
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。"),
+        ("system", "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。注意，评分为0到1之间的浮点数评分，0.9表示完美，0.5表示无改进,禁止输出任何大于1的值。"),
         ("human", "修改前: {before}\n\n修改后: {after}")
     ])
 
