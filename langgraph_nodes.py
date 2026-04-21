@@ -3,11 +3,11 @@ import random
 
 from langgraph_state import GraphState, HistoryItem, Issue
 from paper_reviewer_tool import split_into_sections
-from langchain_core.output_parsers import StrOutputParser
+# from langchain_core.output_parsers import StrOutputParser
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+# from langchain_core.output_parsers import PydanticOutputParser
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -124,7 +124,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
             "你是一位顶尖物理学期刊的资深审稿人，同时也是 LaTeX 专家。"
             "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
             "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
-            "请保持专业、严谨的态度。"
+            "请保持专业、严谨的态度。最多返回 5 个最重要的问题"
         )),
         ("human", "标题: {title}\n\n内容:\n{content}")
     ])
@@ -215,20 +215,36 @@ def editor_node_llm(state: GraphState):
         logger.info("editor_node: section_id=%s no issues to fix, skipping.", section.id)
         return state
 
-    issues_text = "\n".join([f"- {i.problem}" for i in current_section_issues])
+    issues_text = "\n".join([
+    f"- [{i.severity}] {i.problem} | span: {i.span}"
+    for i in current_section_issues
+])
     
     # 2. 构建优雅的 ChatPrompt
     prompt = ChatPromptTemplate.from_messages([
-        ("system", (
-            "你是一位顶尖的 LaTeX 润色专家和物理学学术编辑。"
-            "你的任务是根据提供的问题列表优化 LaTeX 段落。"
-            "要求：\n"
-            "1. 严禁破坏 LaTeX 语法和数学公式。\n"
-            "2. 显著提升学术表达的专业性和流畅度。\n"
-            "3. 只输出修改后的 LaTeX 内容，不要包含任何 Markdown 格式（如 ```latex）或解释文字。"
-        )),
-        ("human", "待修改内容:\n{content}\n\n需要解决的问题:\n{issues}")
-    ])
+    ("system", (
+        "你是一位顶尖的 LaTeX 润色专家和物理学学术编辑。\n"
+        "你的任务是基于问题列表，对给定段落进行最小必要修改（minimal edit）。\n\n"
+
+        "【严格要求】\n"
+        "1. 仅修改问题涉及的文本片段（由 span 指定），不要重写整个段落。\n"
+        "2. 优先解决 high > medium > low 严重程度的问题。\n"
+        "3. 严禁破坏 LaTeX 语法、公式、命令结构。\n"
+        "4. 不要引入新的内容或改变原有科学含义。\n"
+        "5. 输出必须是完整的 LaTeX 段落。\n"
+        "6. 严禁输出 Markdown、解释说明或额外文本。\n\n"
+
+        "【问题格式说明】\n"
+        "- [severity] problem | span: 原文片段\n"
+    )),
+    ("human", (
+        "【原始段落】\n"
+        "{content}\n\n"
+        "【需要解决的问题】\n"
+        "{issues}\n\n"
+        "请输出修改后的 LaTeX 段落："
+    ))
+])
 
     # 3. 组成 LCEL 链条：Prompt -> LLM -> 纯文本解析
     chain = prompt | llm_strucured_editor # | StrOutputParser()
@@ -241,6 +257,7 @@ def editor_node_llm(state: GraphState):
         })
         
         # 简单清洗，防止 LLM 不听话带上 Markdown 标签
+        refined_content = refined_content.refined_latex.strip()
         refined_content = refined_content.replace("```latex", "").replace("```", "").strip()
 
         # 更新 state
