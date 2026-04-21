@@ -1,17 +1,17 @@
-from langgraph.graph import StateGraph
-from langgraph_state import GraphState
+from langgraph.graph import END, StateGraph
+
 from langgraph_nodes import (
-    init_node,
-    reviewer_node,
-    editor_node,
-    critic_node,
     aggregator_node,
-    next_section,
+    critic_node,
+    editor_node,
     has_more_sections,
+    init_node,
     iteration_step,
+    next_section,
+    reviewer_node,
     route_after_iteration,
 )
-from langgraph.graph import END
+from langgraph_state import GraphState
 
 builder = StateGraph(GraphState)
 

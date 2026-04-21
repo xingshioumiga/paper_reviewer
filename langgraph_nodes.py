@@ -1,9 +1,14 @@
-from typing import List
+import logging
 import random
-from langgraph_state import GraphState, Issue, HistoryItem, Section
+
+from langgraph_state import GraphState, HistoryItem, Issue
 from paper_reviewer_tool import split_into_sections
+
 # ===== 需要你已有的定义 =====
 # Section, Issue, HistoryItem, GraphState
+
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -21,6 +26,7 @@ def init_node(state: GraphState) -> GraphState:
     state.iteration = 0
     state.current_section_index = 0
     state.no_improve_rounds = 0
+    logger.info("init_node: initialized sections=%s", len(sections))
 
     return state
 
@@ -42,6 +48,12 @@ def reviewer_node(state: GraphState) -> GraphState:
     ]
 
     state.issues = issues
+    logger.info(
+        "reviewer_node: section_id=%s index=%s issues=%s",
+        section.id,
+        state.current_section_index,
+        len(issues),
+    )
     return state
 
 
@@ -72,6 +84,12 @@ def editor_node(state: GraphState):
             accepted=False      # aggregator 决定
         )
     )
+    logger.info(
+        "editor_node: section_id=%s issues_applied=%s history_len=%s",
+        section.id,
+        len(state.issues),
+        len(state.history),
+    )
 
     return state
 
@@ -83,6 +101,7 @@ def critic_node(state: GraphState) -> GraphState:
     score = random.uniform(0.6, 0.95)
 
     state.current_score = score  # ✅ 修正字段
+    logger.info("critic_node: score=%.4f", score)
 
     return state
 
@@ -99,6 +118,7 @@ def aggregator_node(state: GraphState):
 
     # ✅ 防崩保护
     if not state.history:
+        logger.warning("aggregator_node: history is empty, skipping update")
         return state
     # 🔥 更新“最后一条 history”
 
@@ -110,9 +130,21 @@ def aggregator_node(state: GraphState):
         state.best_tex = state.current_tex
         last.accepted = True
         state.no_improve_rounds = 0
+        logger.info(
+            "aggregator_node: accepted iteration=%s section_id=%s best_score=%.4f",
+            state.iteration,
+            last.section_id,
+            state.best_score,
+        )
     else:
         last.accepted = False
         state.no_improve_rounds += 1
+        logger.info(
+            "aggregator_node: rejected iteration=%s section_id=%s no_improve_rounds=%s",
+            state.iteration,
+            last.section_id,
+            state.no_improve_rounds,
+        )
 
     return state
 
@@ -125,6 +157,7 @@ def next_section(state: GraphState) -> GraphState:
         state.current_section_index += 1
     else:
         state.current_section_index += 1  # 让它越界给判断函数处理
+    logger.debug("next_section: current_section_index=%s", state.current_section_index)
     return state
 
 
@@ -144,6 +177,7 @@ def iteration_step(state: GraphState) -> GraphState:
     # 只负责推进迭代状态
     state.iteration += 1
     state.current_section_index = 0
+    logger.info("iteration_step: iteration=%s", state.iteration)
     return state
 def route_after_iteration(state: GraphState) -> str:
     # 只负责路由判断，不修改 state

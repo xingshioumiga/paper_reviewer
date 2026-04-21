@@ -1,6 +1,8 @@
 import re
 from typing import List
+
 from langgraph_state import Section
+
 
 def split_into_sections(tex: str) -> List[Section]:
     pattern = r"(\\section\{.*?\})"
