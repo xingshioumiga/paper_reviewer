@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install Dependencies (AIagent1)",
+      "type": "shell",
+      "command": "D:/ProgramData/anaconda3/envs/AIagent1/python.exe -m pip install -r requirements.txt",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Demo (AIagent1)",
+      "type": "shell",
+      "command": "D:/ProgramData/anaconda3/envs/AIagent1/python.exe run_demo.py",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Tests (AIagent1)",
+      "type": "shell",
+      "command": "D:/ProgramData/anaconda3/envs/AIagent1/python.exe -m pytest -q",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

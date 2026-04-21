@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Demo (AIagent1)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_demo.py",
+      "console": "integratedTerminal",
+      "python": "D:/ProgramData/anaconda3/envs/AIagent1/python.exe",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run Pytest (AIagent1)",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-q"
+      ],
+      "console": "integratedTerminal",
+      "python": "D:/ProgramData/anaconda3/envs/AIagent1/python.exe",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
