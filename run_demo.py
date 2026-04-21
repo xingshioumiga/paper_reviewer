@@ -24,9 +24,14 @@ def main() -> None:
     print(f"Best score: {final_state.best_score:.4f}")
     print(f"History items: {len(final_state.history)}")
     print()
-    print("=== Best TeX Preview ===")
-    preview = final_state.best_tex if final_state.best_tex else final_state.current_tex
-    print(preview[:1200])
+    output_file = Path("output.tex")
+    output_tex = final_state.best_tex if final_state.best_tex else final_state.current_tex
+    output_file.write_text(output_tex, encoding="utf-8")
+
+    print(f"Saved output to: {output_file.resolve()}")
+    print()
+    print("=== Output TeX Preview (first 1200 chars) ===")
+    print(output_tex[:1200])
 
 
 if __name__ == "__main__":
