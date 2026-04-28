@@ -13,9 +13,32 @@ from pydantic import BaseModel, Field
 
 
 
+# # --- 初始化本地 Ollama 驱动的 Qwen2.5---reviewer ---
+# llm_ini_reviewer = ChatOpenAI(
+#     model="qwen2.5:14b",
+#     openai_api_key="ollama",
+#     base_url="http://localhost:11434/v1",
+#     temperature=0.1 # 建议低随机性，保证评审结果严谨
+# )
+
+# # --- 初始化本地 Ollama 驱动的 Qwen2.5---editor ---
+# llm_ini_editor = ChatOpenAI(
+#     model="qwen2.5:14b",
+#     openai_api_key="ollama",
+#     base_url="http://localhost:11434/v1",
+#     temperature=0.7 # 建议中随机性，保证编辑结果流畅
+# )
+
+# # --- 初始化本地 Ollama 驱动的 Qwen2.5---critic ---
+# llm_ini_critic = ChatOpenAI(
+#     model="qwen2.5:14b",
+#     openai_api_key="ollama",
+#     base_url="http://localhost:11434/v1",
+#     temperature=0. # 温度将为0，保证评分结果严谨
+# )
 # --- 初始化本地 Ollama 驱动的 Qwen2.5---reviewer ---
 llm_ini_reviewer = ChatOpenAI(
-    model="qwen2.5:14b",
+    model="qwen3.5:9b",
     openai_api_key="ollama",
     base_url="http://localhost:11434/v1",
     temperature=0.1 # 建议低随机性，保证评审结果严谨
@@ -23,7 +46,7 @@ llm_ini_reviewer = ChatOpenAI(
 
 # --- 初始化本地 Ollama 驱动的 Qwen2.5---editor ---
 llm_ini_editor = ChatOpenAI(
-    model="qwen2.5:14b",
+    model="qwen3.5:9b",
     openai_api_key="ollama",
     base_url="http://localhost:11434/v1",
     temperature=0.7 # 建议中随机性，保证编辑结果流畅
@@ -31,7 +54,7 @@ llm_ini_editor = ChatOpenAI(
 
 # --- 初始化本地 Ollama 驱动的 Qwen2.5---critic ---
 llm_ini_critic = ChatOpenAI(
-    model="qwen2.5:14b",
+    model="qwen3.5:9b",
     openai_api_key="ollama",
     base_url="http://localhost:11434/v1",
     temperature=0. # 温度将为0，保证评分结果严谨
