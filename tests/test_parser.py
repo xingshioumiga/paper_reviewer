@@ -1,4 +1,5 @@
-from paper_reviewer_tool import split_into_sections
+from langgraph_state import Section
+from paper_reviewer_tool import render_sections, split_into_sections
 
 
 def test_split_into_sections_parses_three_sections():
@@ -38,3 +39,49 @@ def test_split_into_sections_handles_complex_latex():
     assert len(sections) == 2
     assert sections[0].title == "\\section{Method}"
     assert "\\subsection{Details}" in sections[0].content
+
+
+def test_split_into_sections_preserves_nested_label_in_title():
+    tex = (
+        "\\section{\\label{sec:1}Introduction}\n"
+        "Intro body.\n"
+        "\\section{\\label{sec:2}Method}\n"
+        "Method body.\n"
+    )
+    sections = split_into_sections(tex)
+
+    assert len(sections) == 2
+    assert sections[0].title == "\\section{\\label{sec:1}Introduction}"
+    assert sections[0].content == "Intro body."
+    assert sections[1].title == "\\section{\\label{sec:2}Method}"
+
+
+def test_split_into_sections_ignores_commented_section_commands():
+    tex = (
+        "\\section{A}\n"
+        "A body.\n"
+        "% \\section{Commented out}\n"
+        "Still A body.\n"
+        "\\section{B}\n"
+        "B body.\n"
+    )
+    sections = split_into_sections(tex)
+
+    assert len(sections) == 2
+    assert sections[0].title == "\\section{A}"
+    assert "% \\section{Commented out}" in sections[0].content
+    assert sections[1].title == "\\section{B}"
+
+
+def test_render_sections_strips_accidental_leading_section_from_content():
+    rendered = render_sections(
+        [
+            Section(
+                id="sec_0",
+                title="\\section{\\label{sec:1}Introduction}",
+                content="\\section{Introduction}\\label{sec:1}\nIntro body.",
+            )
+        ]
+    )
+
+    assert rendered == "\\section{\\label{sec:1}Introduction}\nIntro body."

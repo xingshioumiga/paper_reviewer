@@ -1,5 +1,6 @@
 import argparse
 import logging
+import time
 from pathlib import Path
 from typing import Any
 import yaml
@@ -56,6 +57,7 @@ def parse_args() -> argparse.Namespace:
 # 主函数
 # =========================
 def main() -> None:
+    started_at = time.perf_counter()
     args = parse_args()
     config = load_config(Path(args.config_path))
 
@@ -128,10 +130,11 @@ def main() -> None:
     output_file.write_text(output_tex, encoding="utf-8")
 
     logger.info(
-        "run complete: iterations=%s best_score=%.4f history=%s output=%s",
+        "run complete: iterations=%s best_score=%.4f history=%s elapsed=%.2fs output=%s",
         final_state.iteration,
         final_state.best_score,
         len(final_state.history),
+        time.perf_counter() - started_at,
         output_file.resolve(),
     )
 

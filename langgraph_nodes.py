@@ -1,8 +1,9 @@
 import logging
 import random
+import time
 
 from langgraph_state import GraphState, HistoryItem, Issue
-from paper_reviewer_tool import split_into_sections
+from paper_reviewer_tool import render_sections, split_into_sections, strip_leading_section_command
 # from langchain_core.output_parsers import StrOutputParser
 
 from langchain_openai import ChatOpenAI
@@ -90,10 +91,29 @@ llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
 logger = logging.getLogger(__name__)
 
 
+def _elapsed_seconds(state: GraphState) -> float:
+    if not state.run_started_at:
+        return 0.0
+    return time.monotonic() - state.run_started_at
+
+
+def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
+    section_count = len(state.sections)
+    section_number = min(state.current_section_index + 1, section_count)
+    return (
+        state.iteration + 1,
+        state.max_iterations,
+        section_number,
+        section_count,
+        _elapsed_seconds(state),
+    )
+
+
 # =========================
 # 1️⃣ 初始化节点
 # =========================
 def init_node(state: GraphState) -> GraphState:
+    state.run_started_at = time.monotonic()
     sections = split_into_sections(state.original_tex)
 
     state.sections = sections
@@ -105,7 +125,13 @@ def init_node(state: GraphState) -> GraphState:
     state.iteration = 0
     state.current_section_index = 0
     state.no_improve_rounds = 0
-    logger.info("init_node: initialized sections=%s", len(sections))
+    logger.info(
+        "init_node: initialized sections=%s max_iterations=%s max_no_improve=%s elapsed=%.2fs",
+        len(sections),
+        state.max_iterations,
+        state.max_no_improve,
+        _elapsed_seconds(state),
+    )
 
     return state
 
@@ -128,10 +154,11 @@ def reviewer_node(state: GraphState) -> GraphState:
 
     state.issues = issues
     logger.info(
-        "reviewer_node: section_id=%s index=%s issues=%s",
+        "reviewer_node: section_id=%s index=%s issues=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
         section.id,
         state.current_section_index,
         len(issues),
+        *_progress_args(state),
     )
     return state
 
@@ -177,10 +204,11 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
     # --- 保持大哥要求的原始日志输出格式 ---
     logger.info(
-        "reviewer_node: section_id=%s index=%s issues=%s",
+        "reviewer_node: section_id=%s index=%s issues=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
         section.id,
         state.current_section_index,
         len(state.issues),
+        *_progress_args(state),
     )
     
     return state
@@ -215,10 +243,12 @@ def editor_node(state: GraphState):
         )
     )
     logger.info(
-        "editor_node: section_id=%s issues_applied=%s history_len=%s",
+        "editor_node: section_id=%s issues_applied=%s history_len=%s "
+        "progress=%s/%s section=%s/%s elapsed=%.2fs",
         section.id,
         len(state.issues),
         len(state.history),
+        *_progress_args(state),
     )
 
     return state
@@ -291,6 +321,7 @@ def editor_node_llm(state: GraphState):
         # 简单清洗，防止 LLM 不听话带上 Markdown 标签
         refined_content = refined_content.refined_latex.strip()
         refined_content = refined_content.replace("```latex", "").replace("```", "").strip()
+        refined_content = strip_leading_section_command(refined_content)
 
         # 更新 state
         old_content = section.content
@@ -312,10 +343,12 @@ def editor_node_llm(state: GraphState):
 
     # 5. 保持大哥要求的日志格式，同时稍微优化了显示精度
     logger.info(
-        "editor_node: section_id=%s issues_applied=%s history_len=%s",
+        "editor_node: section_id=%s issues_applied=%s history_len=%s "
+        "progress=%s/%s section=%s/%s elapsed=%.2fs",
         section.id,
         len(current_section_issues),
         len(state.history),
+        *_progress_args(state),
     )
     
     return state
@@ -328,7 +361,11 @@ def critic_node(state: GraphState) -> GraphState:
     score = random.uniform(0.6, 0.95)
 
     state.current_score = score  # ✅ 修正字段
-    logger.info("critic_node: score=%.4f", score)
+    logger.info(
+        "critic_node: score=%.4f progress=%s/%s section=%s/%s elapsed=%.2fs",
+        score,
+        *_progress_args(state),
+    )
 
     return state
 
@@ -366,9 +403,10 @@ def critic_node_llm(state: GraphState) -> GraphState:
 
     # 5. 日志输出（保持风格一致）
     logger.info(
-        "critic_node: section_id=%s score=%.2f",
+        "critic_node: section_id=%s score=%.2f progress=%s/%s section=%s/%s elapsed=%.2fs",
         last_history.section_id,
-        score
+        score,
+        *_progress_args(state),
     )
     
     return state
@@ -377,9 +415,9 @@ def critic_node_llm(state: GraphState) -> GraphState:
 # 5️⃣ Aggregator：更新全文 + best + history
 # =========================
 def aggregator_node(state: GraphState):
-    new_tex = "\n\n".join([
-        f"{sec.title}\n{sec.content}" for sec in state.sections
-    ])
+    for section in state.sections:
+        section.content = strip_leading_section_command(section.content)
+    new_tex = render_sections(state.sections)
 
     state.current_tex = new_tex
 
@@ -408,11 +446,13 @@ def aggregator_node(state: GraphState):
         last.accepted = True
         state.no_improve_rounds = 0
         logger.info(
-            "aggregator_node: accepted iteration=%s section_id=%s score=%.4f previous_score=%.4f",
+            "aggregator_node: accepted iteration=%s section_id=%s score=%.4f "
+            "previous_score=%.4f progress=%s/%s section=%s/%s elapsed=%.2fs",
             state.iteration,
             last.section_id,
             state.current_score,
             previous_score,
+            *_progress_args(state),
         )
     else:
         last.accepted = False
@@ -423,19 +463,19 @@ def aggregator_node(state: GraphState):
                 section.content = rollback_content
                 state.sections[idx] = section
                 break
-        state.current_tex = "\n\n".join([
-            f"{sec.title}\n{sec.content}" for sec in state.sections
-        ])
+        state.current_tex = render_sections(state.sections)
         if not state.best_tex:
             state.best_tex = state.current_tex
         logger.info(
             "aggregator_node: rejected iteration=%s section_id=%s "
-            "score=%.4f previous_score=%.4f no_improve_rounds=%s",
+            "score=%.4f previous_score=%.4f no_improve_rounds=%s "
+            "progress=%s/%s section=%s/%s elapsed=%.2fs",
             state.iteration,
             last.section_id,
             state.current_score,
             previous_score,
             state.no_improve_rounds,
+            *_progress_args(state),
         )
 
     return state
@@ -449,7 +489,11 @@ def next_section(state: GraphState) -> GraphState:
         state.current_section_index += 1
     else:
         state.current_section_index += 1  # 让它越界给判断函数处理
-    logger.debug("next_section: current_section_index=%s", state.current_section_index)
+    logger.debug(
+        "next_section: current_section_index=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
+        state.current_section_index,
+        *_progress_args(state),
+    )
     return state
 
 
@@ -469,7 +513,14 @@ def iteration_step(state: GraphState) -> GraphState:
     # 只负责推进迭代状态
     state.iteration += 1
     state.current_section_index = 0
-    logger.info("iteration_step: iteration=%s", state.iteration)
+    logger.info(
+        "iteration_step: iteration=%s/%s elapsed=%.2fs history_len=%s no_improve_rounds=%s",
+        state.iteration,
+        state.max_iterations,
+        _elapsed_seconds(state),
+        len(state.history),
+        state.no_improve_rounds,
+    )
     return state
 def route_after_iteration(state: GraphState) -> str:
     # 只负责路由判断，不修改 state

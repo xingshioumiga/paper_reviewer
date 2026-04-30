@@ -49,6 +49,7 @@ class HistoryItem(BaseModel):
 class GraphState(BaseModel):
     original_tex: str  # 原始输入的 LaTeX 文本（永远不变，用作参考）
     current_tex: str = ""  # 当前版本的 LaTeX 文本（不断被修改）
+    run_started_at: float = 0.0
 
     sections: List[Section] = Field(default_factory=list)  
     # 分割后的段落列表（系统真正操作的核心数据）
