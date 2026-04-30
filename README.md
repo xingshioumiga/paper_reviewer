@@ -37,7 +37,23 @@ Typical diagnostics in logs:
 - parsed section count
 - section-level review/edit steps
 - critic score per step
-- best-score updates and no-improve rounds
+- section-level score comparison, rollback, and no-improve rounds
+
+## Iteration Semantics
+
+The graph iterates over every parsed `\section{...}` before starting the next
+global iteration. After each edit, the critic scores the latest section update
+and the aggregator compares that score with the last accepted score for the same
+`section_id`.
+
+- If the new score is higher than the previous accepted score for that section,
+  the edit is accepted and stored in history.
+- If the new score is not higher, the edit is rejected and the section content is
+  rolled back to the last accepted version for that same section.
+- If a section has no previous accepted score, the comparison baseline is `0.0`.
+
+This means `best_score` remains a global diagnostic value, while accept/reject
+decisions are made per section rather than against the global best score.
 
 ## One-Click Run in Cursor/VS Code
 

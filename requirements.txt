@@ -1,4 +1,6 @@
 langgraph
+langchain-core
+langchain-openai
 pydantic
 pytest
 pyyaml

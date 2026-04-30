@@ -392,24 +392,49 @@ def aggregator_node(state: GraphState):
     last = state.history[-1]
     last.score = state.current_score
 
-    if state.current_score > state.best_score:
-        state.best_score = state.current_score
+    previous_same_section = next(
+        (
+            item
+            for item in reversed(state.history[:-1])
+            if item.section_id == last.section_id and item.accepted
+        ),
+        None,
+    )
+    previous_score = previous_same_section.score if previous_same_section else 0.0
+
+    if state.current_score > previous_score:
+        state.best_score = max(state.best_score, state.current_score)
         state.best_tex = state.current_tex
         last.accepted = True
         state.no_improve_rounds = 0
         logger.info(
-            "aggregator_node: accepted iteration=%s section_id=%s best_score=%.4f",
+            "aggregator_node: accepted iteration=%s section_id=%s score=%.4f previous_score=%.4f",
             state.iteration,
             last.section_id,
-            state.best_score,
+            state.current_score,
+            previous_score,
         )
     else:
         last.accepted = False
         state.no_improve_rounds += 1
+        rollback_content = previous_same_section.after if previous_same_section else last.before
+        for idx, section in enumerate(state.sections):
+            if section.id == last.section_id:
+                section.content = rollback_content
+                state.sections[idx] = section
+                break
+        state.current_tex = "\n\n".join([
+            f"{sec.title}\n{sec.content}" for sec in state.sections
+        ])
+        if not state.best_tex:
+            state.best_tex = state.current_tex
         logger.info(
-            "aggregator_node: rejected iteration=%s section_id=%s no_improve_rounds=%s",
+            "aggregator_node: rejected iteration=%s section_id=%s "
+            "score=%.4f previous_score=%.4f no_improve_rounds=%s",
             state.iteration,
             last.section_id,
+            state.current_score,
+            previous_score,
             state.no_improve_rounds,
         )
 
