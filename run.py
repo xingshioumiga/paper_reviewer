@@ -16,6 +16,7 @@ from utils.logging_setup import setup_logging
 # 配置加载
 # =========================
 def load_config(config_path: Path) -> dict[str, Any]:
+    """读取 YAML 配置，命令行参数会在 main 中覆盖这里的默认值。"""
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -32,6 +33,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
 # 参数解析
 # =========================
 def parse_args() -> argparse.Namespace:
+    """解析命令行参数，用于指定输入、输出和迭代停止条件。"""
     parser = argparse.ArgumentParser(
         description="Run the LLM-powered paper reviewer pipeline."
     )
@@ -57,6 +59,7 @@ def parse_args() -> argparse.Namespace:
 # 主函数
 # =========================
 def main() -> None:
+    """运行 LLM 版论文评审与修改流程。"""
     started_at = time.perf_counter()
     args = parse_args()
     config = load_config(Path(args.config_path))

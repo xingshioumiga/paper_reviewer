@@ -6,6 +6,7 @@ LABEL_COMMAND = "\\label"
 
 
 def _is_escaped(tex: str, index: int) -> bool:
+    """判断当前位置是否被反斜杠转义，避免误判 LaTeX 特殊字符。"""
     slash_count = 0
     pos = index - 1
     while pos >= 0 and tex[pos] == "\\":
@@ -15,6 +16,7 @@ def _is_escaped(tex: str, index: int) -> bool:
 
 
 def _is_commented(tex: str, index: int) -> bool:
+    """判断当前位置之前是否已有未转义的 %，用于跳过注释中的 section。"""
     line_start = tex.rfind("\n", 0, index) + 1
     pos = line_start
     while pos < index:
@@ -25,6 +27,7 @@ def _is_commented(tex: str, index: int) -> bool:
 
 
 def _parse_balanced(tex: str, start: int, open_char: str, close_char: str) -> int | None:
+    r"""解析成对括号，支持 title 中嵌套 \label{...} 这类 LaTeX 命令。"""
     if start >= len(tex) or tex[start] != open_char:
         return None
 
@@ -43,6 +46,7 @@ def _parse_balanced(tex: str, start: int, open_char: str, close_char: str) -> in
 
 
 def _parse_section_command(tex: str, start: int) -> int | None:
+    r"""返回完整 \section 命令的结束位置；解析失败时返回 None。"""
     if not tex.startswith(SECTION_COMMAND, start):
         return None
     if start > 0 and tex[start - 1].isalpha():
@@ -67,6 +71,7 @@ def _parse_section_command(tex: str, start: int) -> int | None:
 
 
 def _find_section_commands(tex: str) -> list[tuple[int, int]]:
+    """扫描全文，找出所有真实 section 命令的起止位置。"""
     commands = []
     pos = 0
     while True:
@@ -84,6 +89,7 @@ def _find_section_commands(tex: str) -> list[tuple[int, int]]:
 
 
 def split_into_sections(tex: str) -> list[Section]:
+    """将 LaTeX 全文切分为 Section 列表，正文保留到下一个 section 之前。"""
     commands = _find_section_commands(tex)
     sections = []
 
@@ -101,6 +107,7 @@ def split_into_sections(tex: str) -> list[Section]:
 
 
 def strip_leading_section_command(content: str) -> str:
+    """清理 LLM 误输出到正文开头的重复 section/title 信息。"""
     leading_len = len(content) - len(content.lstrip())
     start = leading_len
     end = _parse_section_command(content, start)
@@ -120,6 +127,7 @@ def strip_leading_section_command(content: str) -> str:
 
 
 def render_sections(sections: list[Section]) -> str:
+    """把 Section 列表重新渲染成 LaTeX，统一避免重复 section 命令。"""
     return "\n\n".join(
         f"{section.title}\n{strip_leading_section_command(section.content)}"
         for section in sections

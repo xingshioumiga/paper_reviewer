@@ -12,6 +12,7 @@ from utils.logging_setup import setup_logging
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
+    """读取 demo 配置文件，保持本地测试入口和正式入口一致。"""
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -23,6 +24,7 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
+    """解析 demo 参数，方便覆盖输入输出路径和停止条件。"""
     parser = argparse.ArgumentParser(description="Run the paper reviewer demo pipeline.")
     parser.add_argument("--input", dest="input_path", help="Input TeX file path")
     parser.add_argument("--output", dest="output_path", help="Output TeX file path")
@@ -39,6 +41,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """运行 mock 版 LangGraph 流程，用于快速测试路由和状态更新。"""
     started_at = time.perf_counter()
     args = parse_args()
     config = load_config(Path(args.config_path))

@@ -6,6 +6,7 @@ from LangGraph_loop import graph
 from langgraph_state import GraphState
 
 
+# 端到端测试验证 mock 图和 CLI 入口能生成可用输出。
 def test_graph_invoke_generates_history(monkeypatch):
     # Make score deterministic for stable tests.
     monkeypatch.setattr("langgraph_nodes.random.uniform", lambda a, b: 0.8)

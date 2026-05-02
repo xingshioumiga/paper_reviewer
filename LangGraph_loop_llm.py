@@ -15,6 +15,7 @@ from langgraph_nodes import (
 from langgraph_state import GraphState
 
 
+# LLM 版本图：Reviewer / Editor / Critic 都调用本地 Ollama 兼容接口。
 builder = StateGraph(GraphState)
 
 # =========================
@@ -42,9 +43,7 @@ builder.add_edge("editor", "critic")
 builder.add_edge("critic", "aggregator")
 builder.add_edge("aggregator", "next_section")
 
-# =========================
-# 🔁 section loop（段落循环）
-# =========================
+# section loop：按 section 逐个处理；达到 section 级无提升上限的段落会被跳过。
 builder.add_conditional_edges(
     "next_section",
     has_more_sections,
@@ -54,9 +53,7 @@ builder.add_conditional_edges(
     }
 )
 
-# =========================
-# 🔁 iteration loop（多轮优化）
-# =========================
+# iteration loop：整轮结束后，根据最大迭代数和全文是否改进决定是否继续。
 builder.add_conditional_edges(
     "iteration_step",
     route_after_iteration,

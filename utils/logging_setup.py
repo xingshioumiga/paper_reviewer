@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 def setup_logging(level: str = "INFO", log_dir: str = "logs") -> Path:
+    """初始化控制台和文件日志，并返回本次运行的日志文件路径。"""
     logs_path = Path(log_dir)
     logs_path.mkdir(parents=True, exist_ok=True)
 

@@ -109,6 +109,21 @@ def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
     )
 
 
+def _is_section_skipped(state: GraphState, section_id: str) -> bool:
+    """判断 section 是否已达到无提升上限，后续轮次应直接跳过。"""
+    return section_id in state.skipped_section_ids
+
+
+def _next_active_section_index(state: GraphState, start_index: int) -> int:
+    """从 start_index 开始寻找仍需要优化的 section。"""
+    index = start_index
+    while index < len(state.sections):
+        if not _is_section_skipped(state, state.sections[index].id):
+            return index
+        index += 1
+    return len(state.sections)
+
+
 # =========================
 # 1️⃣ 初始化节点
 # =========================
@@ -124,7 +139,10 @@ def init_node(state: GraphState) -> GraphState:
 
     state.iteration = 0
     state.current_section_index = 0
-    state.no_improve_rounds = 0
+    state.section_no_improve_rounds = {section.id: 0 for section in sections}
+    state.skipped_section_ids = []
+    state.iteration_accepted_count = 0
+    state.stop_due_to_no_document_improve = False
     logger.info(
         "init_node: initialized sections=%s max_iterations=%s max_no_improve=%s elapsed=%.2fs",
         len(sections),
@@ -444,7 +462,8 @@ def aggregator_node(state: GraphState):
         state.best_score = max(state.best_score, state.current_score)
         state.best_tex = state.current_tex
         last.accepted = True
-        state.no_improve_rounds = 0
+        state.section_no_improve_rounds[last.section_id] = 0
+        state.iteration_accepted_count += 1
         logger.info(
             "aggregator_node: accepted iteration=%s section_id=%s score=%.4f "
             "previous_score=%.4f progress=%s/%s section=%s/%s elapsed=%.2fs",
@@ -456,7 +475,13 @@ def aggregator_node(state: GraphState):
         )
     else:
         last.accepted = False
-        state.no_improve_rounds += 1
+        section_no_improve = state.section_no_improve_rounds.get(last.section_id, 0) + 1
+        state.section_no_improve_rounds[last.section_id] = section_no_improve
+        if (
+            section_no_improve >= state.max_no_improve
+            and last.section_id not in state.skipped_section_ids
+        ):
+            state.skipped_section_ids.append(last.section_id)
         rollback_content = previous_same_section.after if previous_same_section else last.before
         for idx, section in enumerate(state.sections):
             if section.id == last.section_id:
@@ -468,13 +493,14 @@ def aggregator_node(state: GraphState):
             state.best_tex = state.current_tex
         logger.info(
             "aggregator_node: rejected iteration=%s section_id=%s "
-            "score=%.4f previous_score=%.4f no_improve_rounds=%s "
-            "progress=%s/%s section=%s/%s elapsed=%.2fs",
+            "score=%.4f previous_score=%.4f section_no_improve=%s "
+            "skipped_sections=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
             state.iteration,
             last.section_id,
             state.current_score,
             previous_score,
-            state.no_improve_rounds,
+            section_no_improve,
+            len(state.skipped_section_ids),
             *_progress_args(state),
         )
 
@@ -485,10 +511,10 @@ def aggregator_node(state: GraphState):
 # 6️⃣ 切换下一个 section
 # =========================
 def next_section(state: GraphState) -> GraphState:
-    if state.current_section_index < len(state.sections) - 1:
-        state.current_section_index += 1
-    else:
-        state.current_section_index += 1  # 让它越界给判断函数处理
+    state.current_section_index = _next_active_section_index(
+        state,
+        state.current_section_index + 1,
+    )
     logger.debug(
         "next_section: current_section_index=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
         state.current_section_index,
@@ -501,6 +527,7 @@ def next_section(state: GraphState) -> GraphState:
 # 7️⃣ 判断是否还有 section
 # =========================
 def has_more_sections(state: GraphState) -> str:
+    state.current_section_index = _next_active_section_index(state, state.current_section_index)
     if state.current_section_index < len(state.sections):
         return "reviewer"
     else:
@@ -510,22 +537,28 @@ def has_more_sections(state: GraphState) -> str:
 # =========================
 # 8️⃣ 迭代控制（是否继续循环）
 def iteration_step(state: GraphState) -> GraphState:
-    # 只负责推进迭代状态
+    accepted_count = state.iteration_accepted_count
     state.iteration += 1
-    state.current_section_index = 0
+    state.stop_due_to_no_document_improve = accepted_count == 0
+    state.iteration_accepted_count = 0
+    state.current_section_index = _next_active_section_index(state, 0)
     logger.info(
-        "iteration_step: iteration=%s/%s elapsed=%.2fs history_len=%s no_improve_rounds=%s",
+        "iteration_step: iteration=%s/%s elapsed=%.2fs history_len=%s "
+        "accepted_in_round=%s skipped_sections=%s stop_no_document_improve=%s",
         state.iteration,
         state.max_iterations,
         _elapsed_seconds(state),
         len(state.history),
-        state.no_improve_rounds,
+        accepted_count,
+        len(state.skipped_section_ids),
+        state.stop_due_to_no_document_improve,
     )
     return state
 def route_after_iteration(state: GraphState) -> str:
-    # 只负责路由判断，不修改 state
     if state.iteration >= state.max_iterations:
         return "end"
-    if state.no_improve_rounds >= state.max_no_improve:
+    if state.stop_due_to_no_document_improve:
+        return "end"
+    if state.current_section_index >= len(state.sections):
         return "end"
     return "reviewer"
