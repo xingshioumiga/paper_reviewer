@@ -1,0 +1,24 @@
+# Copy to ``config/local.yaml`` and edit (``local.yaml`` can stay machine-specific).
+# Do not put cloud API keys in files that you commit; for Ollama-only use ``api_key: ollama``.
+# Optional: use ``config/my.private.yaml`` (gitignored pattern ``*.private.yaml``) for secrets if you ever need them.
+
+input_path: private-draft.tex
+output_path: output.tex
+max_iterations: 1
+max_no_improve: 100
+log_level: INFO
+log_dir: logs
+ollama_healthcheck: true
+
+llm:
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  reviewer:
+    model: qwen2.5:14b
+    temperature: 0.1
+  editor:
+    model: qwen2.5:14b
+    temperature: 0.7
+  critic:
+    model: qwen2.5:14b
+    temperature: 0.0

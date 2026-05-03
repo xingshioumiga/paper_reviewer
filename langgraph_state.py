@@ -69,3 +69,7 @@ class GraphState(BaseModel):
     stop_due_to_no_document_improve: bool = False  # 上一轮无任何采纳 / No accept in previous round
 
     max_no_improve: int = 2  # 每段允许连续无提升的最大次数 / Max consecutive no-improve per section
+
+    # 本 run 内 LLM 节点失败次数；run.py 据此非零退出，避免静默假成功。
+    # LLM node failure count; run.py uses this for non-zero exit (no silent false success).
+    llm_failure_count: int = 0

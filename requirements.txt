@@ -1,3 +1,4 @@
+# Loose dependency names. For pinned installs see requirements-lock.txt.
 langgraph
 langchain-core
 langchain-openai

@@ -5,16 +5,17 @@ LLM pipeline entry: merge config, init clients, run graph, write output and sect
 
 import argparse
 import logging
+import sys
 import time
 from pathlib import Path
 
-from langgraph_state import GraphState
+from _version import __version__
 from langgraph_nodes import init_llms_from_config, section_score_summary
+from langgraph_state import GraphState
 from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
 from utils.ollama_health import check_ollama_tags
 
-from _version import __version__
 
 # =========================
 # 参数解析
@@ -39,6 +40,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iterations", type=int)
     parser.add_argument("--max-no-improve", type=int)
     parser.add_argument("--log-level", help="INFO / DEBUG / WARNING")
+
+    parser.add_argument(
+        "--allow-llm-failures",
+        action="store_true",
+        help=(
+            "Exit 0 even when LLM calls failed (default: exit 1 if any failed, "
+            "so scripts do not treat the run as success)."
+        ),
+    )
 
     parser.add_argument(
         "--version",
@@ -161,6 +171,17 @@ def main() -> None:
         "final section_score_summary (section_id, score): %s",
         section_scores,
     )
+
+    failures = final_state.llm_failure_count
+    if failures > 0:
+        msg = (
+            f"DEGRADED: {failures} LLM call(s) failed during this run; "
+            "output may be incomplete or unscored. See log for ERROR lines."
+        )
+        logger.error(msg)
+        print(msg, file=sys.stderr)
+        if not args.allow_llm_failures:
+            sys.exit(1)
 
 
 # =========================

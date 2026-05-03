@@ -6,14 +6,16 @@ A lightweight LangGraph-based paper reviewer demo with iterative section editing
 
 1. Create or use the conda environment:
    - `your-env`
-2. Install dependencies:
-   - `python -m pip install -r requirements.txt`
+2. Install dependencies (pick one):
+   - **Reproducible (recommended):** `python -m pip install -r requirements-lock.txt`
+   - **Loose pins:** `python -m pip install -r requirements.txt`
+   - Example with your conda env: `python -m pip install -r requirements-lock.txt`
 3. Run the demo:
    - `python run_demo.py`
 
 ## Configuration
 
-Default runtime config lives in `config/local.yaml`:
+Default runtime config lives in `config/local.yaml` (template: `config/local.example.yaml`). For Ollama-only local use, keep `api_key: ollama`. Do not commit real cloud keys; optional secrets file `config/*.private.yaml` is gitignored.
 
 - `input_path`: source TeX file (default `private-draft.tex`)
 - `output_path`: generated TeX file (default `output.tex`)
@@ -109,7 +111,9 @@ Run full local gate:
 
 ## Troubleshooting
 
-- **`ModuleNotFoundError`**: run `pip install -r requirements.txt` in `your-env`.
+- **`ModuleNotFoundError`**: run `pip install -r requirements-lock.txt` (or `requirements.txt`) in your active environment.
+- **LLM calls failed but a TeX file was written**: `run.py` exits with code **1** when `llm_failure_count > 0` so scripts do not treat the run as clean success. Inspect `logs/` for `ERROR` lines. Use `--allow-llm-failures` only if you intentionally want exit code 0 despite LLM errors.
+- **Global proxy and 502 on localhost**: use `127.0.0.1` in `llm.base_url` or bypass the proxy for local addresses.
 - **No output generated**: check input path and whether the file exists.
 - **Output seems truncated in terminal**: open `output.tex` directly; terminal only prints a preview.
 - **Need deeper debug info**: run with `--log-level DEBUG` and inspect latest file in `logs/`.

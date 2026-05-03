@@ -191,6 +191,7 @@ def init_node(state: GraphState) -> GraphState:
     state.skipped_section_ids = []
     state.iteration_accepted_count = 0
     state.stop_due_to_no_document_improve = False
+    state.llm_failure_count = 0
     logger.info(
         "init_node: initialized sections=%s max_iterations=%s max_no_improve=%s elapsed=%.2fs",
         len(sections),
@@ -270,6 +271,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
         state.issues = issues
 
     except Exception as e:
+        state.llm_failure_count += 1
         logger.error("reviewer_node_llm failed: %s", e, exc_info=True)
         # 如果报错，给个空的 list 防止程序崩掉
         state.issues = []
@@ -416,6 +418,7 @@ def editor_node_llm(state: GraphState):
         ))
 
     except Exception as e:
+        state.llm_failure_count += 1
         logger.error("editor_node_llm failed: %s", e, exc_info=True)
 
     # 5. 保持大哥要求的日志格式，同时稍微优化了显示精度
@@ -478,6 +481,7 @@ def critic_node_llm(state: GraphState) -> GraphState:
         })
         score = result.score
     except Exception as e:
+        state.llm_failure_count += 1
         logger.error("critic_node_llm failed: %s", e, exc_info=True)
         score = 0.5  # 报错时的保底分
 

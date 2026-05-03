@@ -7,6 +7,9 @@ __pycache__/
 venv/
 env/
 
+# Local-only overrides (never commit API keys)
+config/*.private.yaml
+
 # IDE settings
 .idea/
 .vscode/*
