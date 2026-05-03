@@ -1,123 +1,90 @@
 # paper_reviewer
 
-A lightweight LangGraph-based paper reviewer demo with iterative section editing.
+A lightweight LangGraph-based paper reviewer demo with iterative section editing (LaTeX `\section{...}` blocks), using an **OpenAI-compatible** local API (e.g. **Ollama**).
+
+**中文说明见 [README_zh.md](README_zh.md).**
+
+## Requirements
+
+- **Python 3.10+**
+- For **`run.py`** (LLM path): Ollama (or compatible server) running locally, models pulled as configured (e.g. `qwen2.5:14b`).
+- **`run_demo.py`**: mock graph only; no LLM calls; good for fast routing/state checks.
 
 ## Quick Start
 
-1. Create or use the conda environment:
-   - `your-env`
+1. Create and activate a virtual environment (conda or venv).
 2. Install dependencies (pick one):
    - **Reproducible (recommended):** `python -m pip install -r requirements-lock.txt`
    - **Loose pins:** `python -m pip install -r requirements.txt`
-   - Example with your conda env: `python -m pip install -r requirements-lock.txt`
-3. Run the demo:
-   - `python run_demo.py`
+3. Run:
+   - **Mock pipeline:** `python run_demo.py`
+   - **LLM pipeline (Ollama):** `python run.py --input sample_manuscript.tex --output output.tex`
+
+Print version: `python run.py --version`
 
 ## Configuration
 
-Default runtime config lives in `config/local.yaml` (template: `config/local.example.yaml`). For Ollama-only local use, keep `api_key: ollama`. Do not commit real cloud keys; optional secrets file `config/*.private.yaml` is gitignored.
+- Default config file: **`config/local.yaml`** (override with `--config`).
+- Template with comments: **`config/local.example.yaml`**.
+- For Ollama-only local use, keep `api_key: ollama`. Do not commit real cloud API keys; optional **`config/*.private.yaml`** is gitignored for secrets.
+- If a **system-wide HTTP(S) proxy** breaks local Ollama, set `llm.base_url` to `http://127.0.0.1:11434/v1` or add localhost/127.0.0.1 to proxy bypass.
 
-- `input_path`: source TeX file (default `private-draft.tex`)
-- `output_path`: generated TeX file (default `output.tex`)
-- `max_iterations`: graph iteration ceiling
-- `max_no_improve`: per-section consecutive no-improve threshold (see Iteration Semantics)
-- `log_level`: `DEBUG` / `INFO` / `WARNING` / `ERROR`
-- `log_dir`: directory for timestamped log files (default `logs`)
-- `ollama_healthcheck`: if true (default), `run.py` probes `{origin}/api/tags` before the graph; set false when using a non-Ollama OpenAI-compatible host
-- `llm`: OpenAI-compatible API settings (`base_url`, `api_key`, optional positive `request_timeout` in seconds—omit for legacy behavior without per-request caps, and per-role `model` / `temperature` for `reviewer`, `editor`, `critic`)
+Common keys:
 
-You can override config values from CLI:
+- `input_path`, `output_path`, `max_iterations`, `max_no_improve`, `log_level`, `log_dir`
+- `ollama_healthcheck`: when `true`, `run.py` probes `{host from base_url}/api/tags` before the graph; set `false` for non-Ollama OpenAI-compatible hosts
+- `llm`: `base_url`, `api_key`, optional positive `request_timeout` (seconds), and per-role `model` / `temperature` for `reviewer`, `editor`, `critic`
 
-- `python run_demo.py --input mypaper.tex --output revised.tex --max-iterations 2 --log-level DEBUG`
+**CLI overrides YAML** for: `--input`, `--output`, `--max-iterations`, `--max-no-improve`, `--log-level`.
 
-## Logging
+### LLM failures and exit codes
 
-Each run writes logs to both console and file:
+If any LLM node (reviewer/editor/critic) raises, `llm_failure_count` is incremented. **`run.py` exits with code 1** by default after writing the output TeX, so scripts do not treat a degraded run as success. Inspect `logs/` for `ERROR` lines.
 
-- log directory: `logs/`
-- file format: `logs/run_<timestamp>.log`
-
-Typical diagnostics in logs:
-
-- parsed section count
-- section-level review/edit steps
-- critic score per step
-- section-level score comparison, rollback, and no-improve rounds
-- `init_llms_from_config: ... request_timeout=...` reflects what LangChain passes to the client (`None` here means no finite read timeout from config)
-
-If `openai._base_client` logs `Retrying request` on a steady cadence, check `llm.request_timeout` in YAML: a small value cuts slow local generations short; omit it or set a larger positive number.
+Use **`--allow-llm-failures`** only if you intentionally want exit code 0 despite LLM errors.
 
 ## Iteration Semantics
 
-The graph iterates over every parsed `\section{...}` before starting the next
-global iteration. After each edit, the critic scores the latest section update
-and the aggregator compares that score with the last accepted score for the same
-`section_id`.
+The graph walks every parsed `\section{...}` in document order before the next outer iteration. After each edit, the critic scores the change and the **aggregator** compares to the last **accepted** score for that `section_id`:
 
-- If the new score is higher than the previous accepted score for that section,
-  the edit is accepted and stored in history.
-- If the new score is not higher, the edit is rejected and the section content is
-  rolled back to the last accepted version for that same section.
-- If a section has no previous accepted score, the comparison baseline is `0.0`.
+- Higher score → accept and record in `history`.
+- Otherwise → roll the section back to the last accepted content.
+- If a section has no prior accepted score, the baseline is `0.0`.
 
-Per-section scores are stored on each `HistoryItem`; the run ends by logging a
-`section_score_summary` list mapping each `section_id` to its latest **accepted**
-critic score (sections never accepted appear as `0.0`). A single global “best
-score” float is not used, because critic scores apply to one section at a time
-and would be misleading if mixed into one number.
+The run ends with a per-section **accepted** score summary (never accepted → `0.0`). There is **no single global “best score”** across sections, to avoid misleading mixing of incomparable per-section critic values.
+
+## Logging
+
+Each run logs to the console and to `log_dir` (default `logs/`), files named `run_<timestamp>.log`. If `openai._base_client` keeps logging `Retrying request`, check `llm.request_timeout` in YAML: a small value can abort slow local generations; omit it or set a larger positive value.
 
 ## One-Click Run in Cursor/VS Code
 
-This repository includes:
+The repo includes `.vscode/launch.json` and `.vscode/tasks.json`. If launch names still reference a specific conda env (e.g. `your-env`), adjust the `python` path in those JSON files to match your machine.
 
-- `.vscode/launch.json`: run/debug `run_demo.py` with F5
-- `.vscode/tasks.json`: one-click terminal tasks
+Typical tasks: run demo, run tests, ruff, combined quality gate.
 
-After opening the workspace:
+## Tests and quality gate
 
-1. Open **Run and Debug**
-2. Select **Run Demo**
-3. Press **F5**
+```bash
+python -m pytest -q
+python -m ruff check .
+```
 
-Useful tasks:
-
-- `Run Demo`
-- `Run Tests`
-- `Lint (ruff)`
-- `Quality Gate (ruff + pytest)`
-
-## Test
-
-Run tests with:
-
-- `python -m pytest -q`
-
-Included tests cover:
-
-- parser behavior and edge cases
-- routing boundaries and stop conditions
-- end-to-end graph invocation and CLI output generation
-
-## Quality Gate
-
-Run lints:
-
-- `python -m ruff check .`
-
-Run full local gate:
-
-- `python -m ruff check .`
-- `python -m pytest -q`
+Coverage includes: TeX parser edge cases, routing/stop rules, mock end-to-end graph and CLI, and **`run.py` exit behaviour** when the graph reports LLM failures.
 
 ## Troubleshooting
 
-- **`ModuleNotFoundError`**: run `pip install -r requirements-lock.txt` (or `requirements.txt`) in your active environment.
-- **LLM calls failed but a TeX file was written**: `run.py` exits with code **1** when `llm_failure_count > 0` so scripts do not treat the run as clean success. Inspect `logs/` for `ERROR` lines. Use `--allow-llm-failures` only if you intentionally want exit code 0 despite LLM errors.
-- **Global proxy and 502 on localhost**: use `127.0.0.1` in `llm.base_url` or bypass the proxy for local addresses.
-- **No output generated**: check input path and whether the file exists.
-- **Output seems truncated in terminal**: open `output.tex` directly; terminal only prints a preview.
-- **Need deeper debug info**: run with `--log-level DEBUG` and inspect latest file in `logs/`.
+- **`ModuleNotFoundError`**: `pip install -r requirements-lock.txt` (or `requirements.txt`) in the active environment.
+- **LLM errors but TeX written**: default **exit code 1**; see **LLM failures and exit codes** above.
+- **Global proxy and 502 on localhost**: use `127.0.0.1` in `llm.base_url` or bypass proxy for local addresses.
+- **No output file**: verify `--input` exists and paths are correct.
+- **Truncated output in terminal**: open the output `.tex` file; the terminal only prints a preview.
+- **Deeper diagnostics**: `--log-level DEBUG` and the latest file under `logs/`.
 
-## Beginner Guide
+## Beginner guide (Chinese)
 
-- Chinese beginner testing guide: `TESTING_GUIDE_ZH.md`
+See **`TESTING_GUIDE_ZH.md`** for a beginner-oriented testing walkthrough.
+
+## Version
+
+`python run.py --version` matches `_version.py` and `pyproject.toml` `[project].version`; bump all together when cutting a release.
