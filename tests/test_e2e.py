@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from LangGraph_loop import graph
+from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
 
 
@@ -18,7 +19,8 @@ def test_graph_invoke_generates_history(monkeypatch):
 
     assert final_state.iteration == 1
     assert len(final_state.history) > 0
-    assert final_state.best_score >= 0.8
+    scores = [s for _, s in section_score_summary(final_state)]
+    assert scores and max(scores) >= 0.8
 
 
 def test_cli_generates_output_file(tmp_path):

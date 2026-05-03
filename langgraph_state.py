@@ -1,8 +1,14 @@
+"""Shared Pydantic models for LangGraph state (sections, issues, history).
+
+LangGraph 使用的状态模型：段落、审稿问题、修改历史等。
+"""
+
 from pydantic import BaseModel, Field
 
 
 class Section(BaseModel):
-    """论文中的一个可独立评审和修改的 section。"""
+    """LaTeX 中按 \\section 切分的一块；可单独评审与改写。
+    One slice of the manuscript split by ``\\section``; reviewed/edited independently."""
 
     id: str
     title: str
@@ -11,7 +17,8 @@ class Section(BaseModel):
 
 
 class Issue(BaseModel):
-    """Reviewer 给出的单个问题，用 section_id 绑定到具体段落。"""
+    """审稿人发现的单个问题；通过 section_id 绑定到段落。
+    Single reviewer finding; tied to a section via ``section_id``."""
 
     section_id: str
     problem: str
@@ -20,7 +27,8 @@ class Issue(BaseModel):
 
 
 class HistoryItem(BaseModel):
-    """记录一次 section 修改尝试，包含修改前后文本、评分和是否采纳。"""
+    """一次针对某段的改写尝试：前后文本、critic 分数、是否采纳。
+    One edit attempt for a section: before/after text, critic score, accepted flag."""
 
     iteration: int
     section_id: str
@@ -31,7 +39,8 @@ class HistoryItem(BaseModel):
 
 
 class GraphState(BaseModel):
-    """LangGraph 在各节点之间传递的全局状态。"""
+    """LangGraph 节点间传递的全局状态（当前稿、段落列表、历史与停止条件）。
+    Global graph state: current draft, sections list, history, and stop flags."""
 
     original_tex: str
     current_tex: str = ""
@@ -43,20 +52,20 @@ class GraphState(BaseModel):
     issues: list[Issue] = Field(default_factory=list)
     history: list[HistoryItem] = Field(default_factory=list)
 
-    current_score: float = 0.0
-    best_tex: str = ""
-    best_score: float = 0.0
+    current_score: float = 0.0  # 本轮 critic 对「最后一次改写」的打分 / Latest critic score for last edit
+    best_tex: str = ""  # 最近一次「采纳」后的全文 LaTeX 快照 / Full-doc snapshot after last accept
 
-    iteration: int = 0
-    max_iterations: int = 3
+    iteration: int = 0  # 已完成的外层轮次数（iteration_step 末尾递增）/ Finished outer rounds
+    max_iterations: int = 3  # 外层循环上限 / Cap on outer iterations
 
-    # section_no_improve_rounds 是 section 级失败计数，避免局部失败污染全局停止条件。
+    # 每段连续「未超过历史最优」的次数；达 max_no_improve 则跳过该段。
+    # Per-section streak of non-improving tries; section is skipped when ≥ max_no_improve.
     section_no_improve_rounds: dict[str, int] = Field(default_factory=dict)
-    skipped_section_ids: list[str] = Field(default_factory=list)
+    skipped_section_ids: list[str] = Field(default_factory=list)  # 已标记跳过的 section id / Skipped section ids
 
-    # iteration_accepted_count 统计当前大循环中被采纳的修改数。
-    # 如果一整轮结束后仍为 0，说明全文没有任何进步，可以提前停止。
+    # 当前这一轮 scan 中被采纳的修改次数；轮末若为 0 则触发提前结束。
+    # Accepted edits in the current full pass over sections; 0 → early stop next route.
     iteration_accepted_count: int = 0
-    stop_due_to_no_document_improve: bool = False
+    stop_due_to_no_document_improve: bool = False  # 上一轮无任何采纳 / No accept in previous round
 
-    max_no_improve: int = 2
+    max_no_improve: int = 2  # 每段允许连续无提升的最大次数 / Max consecutive no-improve per section

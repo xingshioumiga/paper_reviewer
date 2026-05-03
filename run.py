@@ -1,39 +1,27 @@
+"""CLI：加载 YAML、初始化 LLM、执行 ``LangGraph_loop_llm`` 并写出 TeX 与日志。
+
+LLM pipeline entry: merge config, init clients, run graph, write output and section score summary.
+"""
+
 import argparse
 import logging
 import time
 from pathlib import Path
-from typing import Any
-import yaml
-
-# ✅ 使用 LLM 版本 graph
-from LangGraph_loop_llm import graph
 
 from langgraph_state import GraphState
+from langgraph_nodes import init_llms_from_config, section_score_summary
+from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
+from utils.ollama_health import check_ollama_tags
 
-
-# =========================
-# 配置加载
-# =========================
-def load_config(config_path: Path) -> dict[str, Any]:
-    """读取 YAML 配置，命令行参数会在 main 中覆盖这里的默认值。"""
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a mapping at top level.")
-
-    return config
-
+from _version import __version__
 
 # =========================
 # 参数解析
 # =========================
 def parse_args() -> argparse.Namespace:
-    """解析命令行参数，用于指定输入、输出和迭代停止条件。"""
+    """解析 CLI；优先级见 main 内「CLI > config > default」。
+    Parse CLI; precedence is documented in ``main``."""
     parser = argparse.ArgumentParser(
         description="Run the LLM-powered paper reviewer pipeline."
     )
@@ -52,6 +40,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-no-improve", type=int)
     parser.add_argument("--log-level", help="INFO / DEBUG / WARNING")
 
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+
     return parser.parse_args()
 
 
@@ -59,22 +53,33 @@ def parse_args() -> argparse.Namespace:
 # 主函数
 # =========================
 def main() -> None:
-    """运行 LLM 版论文评审与修改流程。"""
+    """运行完整 LLM 流水线并在日志末尾写入 ``section_score_summary``。
+    Run full LLM pipeline; append ``section_score_summary`` as the final log line."""
+
     started_at = time.perf_counter()
     args = parse_args()
-    config = load_config(Path(args.config_path))
+    config = load_merged_config(Path(args.config_path))
 
-    # ===== logging =====
+    # 先配置日志，再初始化 LLM / 跑图，否则 httpx 等库在首次请求完成前可能没有任何文件记录。
     log_level = args.log_level or config.get("log_level", "INFO")
-    log_file = setup_logging(str(log_level))
+    log_dir = str(config.get("log_dir", "logs"))
+    log_file = setup_logging(str(log_level), log_dir=log_dir)
     logger = logging.getLogger(__name__)
+
+    llm_cfg = config.get("llm", {})
+    if config.get("ollama_healthcheck", True) and isinstance(llm_cfg, dict):
+        check_ollama_tags(llm_cfg, timeout=5.0)
+        logger.info("ollama health: GET /api/tags OK (base derived from llm.base_url)")
+
+    init_llms_from_config(config)
+    from LangGraph_loop_llm import graph
 
     # ===== 参数优先级：CLI > config > default =====
     input_path = args.input_path or config.get("input_path", "private-draft.tex")
     output_path = args.output_path or config.get("output_path", "output.tex")
 
     max_iterations = args.max_iterations or int(config.get("max_iterations", 1))
-    max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))#这里需要修改，应该对应与每一个section的max_no_improve,而不是全局的
+    max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))
 
     # ===== 读取输入 =====
     input_file = Path(input_path)
@@ -91,7 +96,8 @@ def main() -> None:
     )
 
     logger.info(
-        "run start (LLM): input=%s output=%s max_iterations=%s max_no_improve=%s log=%s",
+        "run start (LLM) v%s: input=%s output=%s max_iterations=%s max_no_improve=%s log=%s",
+        __version__,
         input_file,
         output_path,
         max_iterations,
@@ -113,10 +119,14 @@ def main() -> None:
     # =========================
     # 📊 输出统计
     # =========================
+    section_scores = section_score_summary(final_state)
+
     print("=== LLM Pipeline Finished ===")
     print(f"Iterations: {final_state.iteration}")
-    print(f"Best score: {final_state.best_score:.4f}")
     print(f"History items: {len(final_state.history)}")
+    print("Section scores (section_id, latest accepted score):")
+    for sid, sc in section_scores:
+        print(f"  {sid}: {sc:.4f}")
     print()
 
     # =========================
@@ -133,9 +143,8 @@ def main() -> None:
     output_file.write_text(output_tex, encoding="utf-8")
 
     logger.info(
-        "run complete: iterations=%s best_score=%.4f history=%s elapsed=%.2fs output=%s",
+        "run complete: iterations=%s history=%s elapsed=%.2fs output=%s",
         final_state.iteration,
-        final_state.best_score,
         len(final_state.history),
         time.perf_counter() - started_at,
         output_file.resolve(),
@@ -147,6 +156,11 @@ def main() -> None:
 
     print("=== Output TeX Preview (first 1200 chars) ===")
     print(output_tex[:1200])
+
+    logger.info(
+        "final section_score_summary (section_id, score): %s",
+        section_scores,
+    )
 
 
 # =========================

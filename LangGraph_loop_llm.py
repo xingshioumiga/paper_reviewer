@@ -1,3 +1,8 @@
+"""LLM LangGraph：审稿/改写/打分为 ``langgraph_nodes`` 的 ``*_llm`` 节点（如 Ollama）。
+
+Production-style graph; call ``init_llms_from_config`` before first ``graph.invoke`` (see ``run.py``).
+"""
+
 from langgraph.graph import END, StateGraph
 
 from langgraph_nodes import (

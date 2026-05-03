@@ -1,3 +1,8 @@
+"""Mock LangGraph：Reviewer/Editor/Critic 均为非 LLM 实现，用于快速回归与 e2e。
+
+State graph with mock nodes (no remote LLM); used by ``run_demo.py`` and tests.
+"""
+
 from langgraph.graph import END, StateGraph
 
 from langgraph_nodes import (

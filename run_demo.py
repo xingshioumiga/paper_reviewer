@@ -1,30 +1,22 @@
+"""CLI：Mock 图入口（无需 Ollama），用于本地快速验证状态机与配置加载。
+
+Mock-graph CLI for fast routing/state checks without a live LLM.
+"""
+
 import argparse
 import logging
 import time
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 from LangGraph_loop import graph
+from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
+from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
 
 
-def load_config(config_path: Path) -> dict[str, Any]:
-    """读取 demo 配置文件，保持本地测试入口和正式入口一致。"""
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a mapping at top level.")
-    return config
-
-
 def parse_args() -> argparse.Namespace:
-    """解析 demo 参数，方便覆盖输入输出路径和停止条件。"""
+    """解析参数；可与 ``config/local.yaml`` 叠加使用。"""
     parser = argparse.ArgumentParser(description="Run the paper reviewer demo pipeline.")
     parser.add_argument("--input", dest="input_path", help="Input TeX file path")
     parser.add_argument("--output", dest="output_path", help="Output TeX file path")
@@ -41,19 +33,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """运行 mock 版 LangGraph 流程，用于快速测试路由和状态更新。"""
+    """调用 mock 图并写 TeX；控制台与日志末尾输出 ``section_score_summary``。
+    Run mock graph, write TeX; print and log ``section_score_summary`` at the end."""
     started_at = time.perf_counter()
     args = parse_args()
-    config = load_config(Path(args.config_path))
+    config = load_merged_config(Path(args.config_path))
 
     log_level = args.log_level or config.get("log_level", "INFO")
-    log_file = setup_logging(str(log_level))
+    log_dir = str(config.get("log_dir", "logs"))
+    log_file = setup_logging(str(log_level), log_dir=log_dir)
     logger = logging.getLogger(__name__)
 
     input_path = args.input_path or config.get("input_path", "private-draft.tex")
     output_path = args.output_path or config.get("output_path", "output.tex")
     max_iterations = args.max_iterations or int(config.get("max_iterations", 1))
-    max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))#这里需要修改，应该对应与每一个section的max_no_improve,而不是全局的
+    max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))
 
     test_file = Path(input_path)
     if not test_file.exists():
@@ -81,18 +75,21 @@ def main() -> None:
     else:
         final_state = result
 
+    section_scores = section_score_summary(final_state)
+
     print("=== Demo Finished ===")
     print(f"Iterations: {final_state.iteration}")
-    print(f"Best score: {final_state.best_score:.4f}")
     print(f"History items: {len(final_state.history)}")
+    print("Section scores (section_id, latest accepted score):")
+    for sid, sc in section_scores:
+        print(f"  {sid}: {sc:.4f}")
     print()
     output_file = Path(output_path)
     output_tex = final_state.best_tex if final_state.best_tex else final_state.current_tex
     output_file.write_text(output_tex, encoding="utf-8")
     logger.info(
-        "run complete: iterations=%s best_score=%.4f history_items=%s elapsed=%.2fs output_file=%s",
+        "run complete: iterations=%s history_items=%s elapsed=%.2fs output_file=%s",
         final_state.iteration,
-        final_state.best_score,
         len(final_state.history),
         time.perf_counter() - started_at,
         output_file.resolve(),
@@ -103,6 +100,11 @@ def main() -> None:
     print()
     print("=== Output TeX Preview (first 1200 chars) ===")
     print(output_tex[:1200])
+
+    logger.info(
+        "final section_score_summary (section_id, score): %s",
+        section_scores,
+    )
 
 
 if __name__ == "__main__":

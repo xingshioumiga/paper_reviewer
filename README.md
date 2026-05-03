@@ -18,8 +18,11 @@ Default runtime config lives in `config/local.yaml`:
 - `input_path`: source TeX file (default `private-draft.tex`)
 - `output_path`: generated TeX file (default `output.tex`)
 - `max_iterations`: graph iteration ceiling
-- `max_no_improve`: early-stop threshold
+- `max_no_improve`: per-section consecutive no-improve threshold (see Iteration Semantics)
 - `log_level`: `DEBUG` / `INFO` / `WARNING` / `ERROR`
+- `log_dir`: directory for timestamped log files (default `logs`)
+- `ollama_healthcheck`: if true (default), `run.py` probes `{origin}/api/tags` before the graph; set false when using a non-Ollama OpenAI-compatible host
+- `llm`: OpenAI-compatible API settings (`base_url`, `api_key`, optional positive `request_timeout` in seconds—omit for legacy behavior without per-request caps, and per-role `model` / `temperature` for `reviewer`, `editor`, `critic`)
 
 You can override config values from CLI:
 
@@ -38,6 +41,9 @@ Typical diagnostics in logs:
 - section-level review/edit steps
 - critic score per step
 - section-level score comparison, rollback, and no-improve rounds
+- `init_llms_from_config: ... request_timeout=...` reflects what LangChain passes to the client (`None` here means no finite read timeout from config)
+
+If `openai._base_client` logs `Retrying request` on a steady cadence, check `llm.request_timeout` in YAML: a small value cuts slow local generations short; omit it or set a larger positive number.
 
 ## Iteration Semantics
 
@@ -52,8 +58,11 @@ and the aggregator compares that score with the last accepted score for the same
   rolled back to the last accepted version for that same section.
 - If a section has no previous accepted score, the comparison baseline is `0.0`.
 
-This means `best_score` remains a global diagnostic value, while accept/reject
-decisions are made per section rather than against the global best score.
+Per-section scores are stored on each `HistoryItem`; the run ends by logging a
+`section_score_summary` list mapping each `section_id` to its latest **accepted**
+critic score (sections never accepted appear as `0.0`). A single global “best
+score” float is not used, because critic scores apply to one section at a time
+and would be misleading if mixed into one number.
 
 ## One-Click Run in Cursor/VS Code
 

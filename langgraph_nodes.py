@@ -1,3 +1,9 @@
+"""LangGraph node functions: init → reviewer → editor → critic → aggregator → routing.
+
+节点流水线：初始化 → 审稿 → 改写 → 打分 → 汇总采纳/回滚 → 切换段落或外层轮次。
+Mock 节点用于快速验证；`*_llm` 节点通过 ``init_llms_from_config`` 使用配置文件中的 LLM。
+"""
+
 import logging
 import random
 import time
@@ -8,64 +14,16 @@ from paper_reviewer_tool import render_sections, split_into_sections, strip_lead
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-# from langchain_core.output_parsers import PydanticOutputParser
-from typing import List, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
+from runtime_config import DEFAULT_CONFIG, merge_config
 
 
-# --- 初始化本地 Ollama 驱动的 Qwen2.5---reviewer ---
-llm_ini_reviewer = ChatOpenAI(
-    model="qwen2.5:14b",
-    openai_api_key="ollama",
-    base_url="http://localhost:11434/v1",
-    temperature=0.1 # 建议低随机性，保证评审结果严谨
-)
-
-# --- 初始化本地 Ollama 驱动的 Qwen2.5---editor ---
-llm_ini_editor = ChatOpenAI(
-    model="qwen2.5:14b",
-    openai_api_key="ollama",
-    base_url="http://localhost:11434/v1",
-    temperature=0.7 # 建议中随机性，保证编辑结果流畅
-)
-
-# --- 初始化本地 Ollama 驱动的 Qwen2.5---critic ---
-llm_ini_critic = ChatOpenAI(
-    model="qwen2.5:14b",
-    openai_api_key="ollama",
-    base_url="http://localhost:11434/v1",
-    temperature=0. # 温度将为0，保证评分结果严谨
-)
-# # --- 初始化本地 Ollama 驱动的 Qwen2.5---reviewer ---
-# llm_ini_reviewer = ChatOpenAI(
-#     model="qwen3.5:9b",
-#     openai_api_key="ollama",
-#     base_url="http://localhost:11434/v1",
-#     temperature=0.1 # 建议低随机性，保证评审结果严谨
-# )
-
-# # --- 初始化本地 Ollama 驱动的 Qwen2.5---editor ---
-# llm_ini_editor = ChatOpenAI(
-#     model="qwen3.5:9b",
-#     openai_api_key="ollama",
-#     base_url="http://localhost:11434/v1",
-#     temperature=0.7 # 建议中随机性，保证编辑结果流畅
-# )
-
-# # --- 初始化本地 Ollama 驱动的 Qwen2.5---critic ---
-# llm_ini_critic = ChatOpenAI(
-#     model="qwen3.5:9b",
-#     openai_api_key="ollama",
-#     base_url="http://localhost:11434/v1",
-#     temperature=0. # 温度将为0，保证评分结果严谨
-# )
-
-# 定义一个容器，方便 LLM 一次性返回多个 Issue，结构化输出
+# LLM 结构化输出容器（与 ChatOpenAI.with_structured_output 配合）。
+# Pydantic wrappers for structured LLM outputs.
 class ReviewOutput(BaseModel):
     issues: List[Issue] = Field(description="段落中发现的问题列表")
-# 创建结构化链reviewer
-llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
 
 
 # 定义一个容器，方便 LLM 一次性返回优化后的 LaTeX 段落内容，结构化输出
@@ -73,22 +31,101 @@ class EditorOutput(BaseModel):
     refined_latex: str = Field(
         description="完全优化后的 LaTeX 段落内容。要求：严禁包含任何 Markdown 标签、解释文字或开场白。"
     )
-# 创建结构化链editor
-llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
 
 
 # 定义一个容器，方便 LLM 一次性返回评分结果，结构化输出
 class ScoreOutput(BaseModel):
     score: float = Field(description="0到1之间的浮点数评分，0.9表示完美，0.5表示无改进")
-#创建结构化链
-llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
 
 
-# ===== 需要你已有的定义 =====
-# Section, Issue, HistoryItem, GraphState
+# 运行期由 init_llms_from_config 填充；import 时用 DEFAULT_CONFIG 预初始化一次。
+# Filled by init_llms_from_config; seeded once at import from DEFAULT_CONFIG.
+llm_ini_reviewer: ChatOpenAI
+llm_ini_editor: ChatOpenAI
+llm_ini_critic: ChatOpenAI
+llm_structured_reviewer: Any
+llm_strucured_editor: Any
+llm_structured_critic: Any
+
+
+def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
+    """根据合并后的配置重建三个 ChatOpenAI 客户端及结构化链（应在 run.py 中再次调用以覆盖 YAML）。
+    Rebuild reviewer/editor/critic clients and structured chains from merged config."""
+    global llm_ini_reviewer, llm_ini_editor, llm_ini_critic
+    global llm_structured_reviewer, llm_strucured_editor, llm_structured_critic
+
+    merged = merge_config(DEFAULT_CONFIG, config or {})
+    llm_cfg = merged.get("llm", {})
+    base_url = str(llm_cfg.get("base_url", "http://localhost:11434/v1"))
+    api_key = str(llm_cfg.get("api_key", "ollama"))
+
+    def _role(name: str) -> dict[str, Any]:
+        block = llm_cfg.get(name)
+        return block if isinstance(block, dict) else {}
+
+    rv = _role("reviewer")
+    ed = _role("editor")
+    cr = _role("critic")
+
+    timeout_raw = llm_cfg.get("request_timeout")
+    request_timeout: float | None = None
+    if timeout_raw is not None:
+        try:
+            t = float(timeout_raw)
+            if t > 0:
+                request_timeout = t
+        except (TypeError, ValueError):
+            pass
+
+    def _chat_kw(temperature: float, model: str) -> dict[str, Any]:
+        kw: dict[str, Any] = {
+            "model": model,
+            "openai_api_key": api_key,
+            "base_url": base_url,
+            "temperature": temperature,
+        }
+        if request_timeout is not None:
+            kw["request_timeout"] = request_timeout
+        return kw
+
+    llm_ini_reviewer = ChatOpenAI(
+        **_chat_kw(float(rv.get("temperature", 0.1)), str(rv.get("model", "qwen2.5:14b"))),
+    )
+    llm_ini_editor = ChatOpenAI(
+        **_chat_kw(float(ed.get("temperature", 0.7)), str(ed.get("model", "qwen2.5:14b"))),
+    )
+    llm_ini_critic = ChatOpenAI(
+        **_chat_kw(float(cr.get("temperature", 0.0)), str(cr.get("model", "qwen2.5:14b"))),
+    )
+
+    llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
+    llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
+    llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
+
+    logging.getLogger(__name__).info(
+        "init_llms_from_config: base_url=%s request_timeout=%r "
+        "reviewer_model=%s editor_model=%s critic_model=%s",
+        base_url,
+        llm_ini_reviewer.request_timeout,
+        str(rv.get("model", "qwen2.5:14b")),
+        str(ed.get("model", "qwen2.5:14b")),
+        str(cr.get("model", "qwen2.5:14b")),
+    )
+
+
+init_llms_from_config({})
 
 
 logger = logging.getLogger(__name__)
+
+
+def _flush_log_handlers() -> None:
+    """Ensure pre-invoke lines hit disk before a blocking LLM call."""
+    for h in logging.getLogger().handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
 
 
 def _elapsed_seconds(state: GraphState) -> float:
@@ -98,6 +135,8 @@ def _elapsed_seconds(state: GraphState) -> float:
 
 
 def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
+    """供日志使用：(外层迭代显示值, max_iter, 当前节序号, 总节数, 已用秒数)。
+    For logging: (1-based iteration display, max, section #, total sections, elapsed s)."""
     section_count = len(state.sections)
     section_number = min(state.current_section_index + 1, section_count)
     return (
@@ -110,12 +149,14 @@ def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
 
 
 def _is_section_skipped(state: GraphState, section_id: str) -> bool:
-    """判断 section 是否已达到无提升上限，后续轮次应直接跳过。"""
+    """该段是否因连续无提升已被列入跳过列表。
+    Whether this section is skipped after too many non-improving edits."""
     return section_id in state.skipped_section_ids
 
 
 def _next_active_section_index(state: GraphState, start_index: int) -> int:
-    """从 start_index 开始寻找仍需要优化的 section。"""
+    """从 start_index 起找第一个未被跳过的段落索引；若无则返回 len(sections)。
+    Next section index ≥ start_index that is not skipped, or len(sections) if none."""
     index = start_index
     while index < len(state.sections):
         if not _is_section_skipped(state, state.sections[index].id):
@@ -124,9 +165,18 @@ def _next_active_section_index(state: GraphState, start_index: int) -> int:
     return len(state.sections)
 
 
-# =========================
-# 1️⃣ 初始化节点
-# =========================
+def section_score_summary(state: GraphState) -> list[tuple[str, float]]:
+    """按文档顺序返回 (section_id, 该段最近一次「采纳」分数)；从未采纳则为 0.0。
+    Document-ordered (section_id, latest accepted critic score); 0.0 if never accepted."""
+    accepted_scores: dict[str, float] = {}
+    for item in state.history:
+        if item.accepted:
+            accepted_scores[item.section_id] = item.score
+    return [(section.id, accepted_scores.get(section.id, 0.0)) for section in state.sections]
+
+
+# --- 1 init：解析 \\section、重置计数器与计时 ---
+# --- 1 init: parse sections, reset counters and timer ---
 def init_node(state: GraphState) -> GraphState:
     state.run_started_at = time.monotonic()
     sections = split_into_sections(state.original_tex)
@@ -135,8 +185,6 @@ def init_node(state: GraphState) -> GraphState:
     state.current_tex = state.original_tex
 
     state.best_tex = state.original_tex
-    state.best_score = 0.0
-
     state.iteration = 0
     state.current_section_index = 0
     state.section_no_improve_rounds = {section.id: 0 for section in sections}
@@ -154,13 +202,12 @@ def init_node(state: GraphState) -> GraphState:
     return state
 
 
-# =========================
-# 2️⃣ Reviewer：找问题（当前简化版）
-# =========================
+# --- 2 reviewer (mock)：占位问题列表，便于离线测图 ---
+# --- 2 reviewer (mock): stub issues for offline graph tests ---
 def reviewer_node(state: GraphState) -> GraphState:
     section = state.sections[state.current_section_index]
 
-    # mock：后续换 LLM
+    # Mock：固定问题；生产路径见 reviewer_node_llm。
     issues = [
         Issue(
             section_id=section.id,
@@ -180,9 +227,9 @@ def reviewer_node(state: GraphState) -> GraphState:
     )
     return state
 
-#LLM版本---------------------------------------------------------------
 def reviewer_node_llm(state: GraphState) -> GraphState:
-    # 获取当前要处理的 section
+    """LLM 审稿：对当前 section 的 title+content 产出 Issue 列表。"""
+    # 当前待处理段落 / Current section under review
     section = state.sections[state.current_section_index]
 
     # 定义针对学术论文和 LaTeX 格式的 Prompt
@@ -199,9 +246,16 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
     # 构造链条并执行
     chain = prompt | llm_structured_reviewer
-    
+
     try:
-        # 调用 Qwen2.5 进行审查
+        logger.info(
+            "reviewer_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "section_id=%s title_chars=%s content_chars=%s",
+            section.id,
+            len(section.title),
+            len(section.content),
+        )
+        _flush_log_handlers()
         response = chain.invoke({
             "title": section.title,
             "content": section.content
@@ -216,7 +270,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
         state.issues = issues
 
     except Exception as e:
-        logger.error("reviewer_node 报错了，大哥！错误信息: %s", e)
+        logger.error("reviewer_node_llm failed: %s", e, exc_info=True)
         # 如果报错，给个空的 list 防止程序崩掉
         state.issues = []
 
@@ -233,9 +287,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
 
 
-# =========================
-# 3️⃣ Editor：基于 issues 修改
-# =========================
+# --- 3 editor (mock)：按 issues 做简单文本追加 ---
 def editor_node(state: GraphState):
     section = state.sections[state.current_section_index]
 
@@ -249,7 +301,7 @@ def editor_node(state: GraphState):
     section.content = new_content
     state.sections[state.current_section_index] = section
 
-    # ✅ 直接写入一个“pending history”
+    # 先写入历史占位；分数与是否采纳由 critic + aggregator 后续填写。
     state.history.append(
         HistoryItem(
             iteration=state.iteration,
@@ -271,8 +323,8 @@ def editor_node(state: GraphState):
 
     return state
 
-#LLM版本---------------------------------------------------------------
 def editor_node_llm(state: GraphState):
+    """LLM 改写：仅处理当前段 issues；无 issues 时仍追加一条 history 供 critic 对齐。"""
     section = state.sections[state.current_section_index]
     
     # ✅ 显式过滤：精准锁定当前段落的问题
@@ -330,7 +382,14 @@ def editor_node_llm(state: GraphState):
     chain = prompt | llm_strucured_editor # | StrOutputParser()
 
     try:
-        # 4. 执行润色
+        logger.info(
+            "editor_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "section_id=%s num_issues=%s content_chars=%s",
+            section.id,
+            len(current_section_issues),
+            len(section.content),
+        )
+        _flush_log_handlers()
         refined_content = chain.invoke({
             "content": section.content,
             "issues": issues_text
@@ -357,7 +416,7 @@ def editor_node_llm(state: GraphState):
         ))
 
     except Exception as e:
-        logger.error("editor_node 润色翻车了，大哥！错误: %s", e)
+        logger.error("editor_node_llm failed: %s", e, exc_info=True)
 
     # 5. 保持大哥要求的日志格式，同时稍微优化了显示精度
     logger.info(
@@ -372,13 +431,11 @@ def editor_node_llm(state: GraphState):
     return state
 
 
-# =========================
-# 4️⃣ Critic：打分
-# =========================
+# --- 4 critic (mock)：随机分，用于 pytest/e2e 稳定性（可 monkeypatch）---
 def critic_node(state: GraphState) -> GraphState:
     score = random.uniform(0.6, 0.95)
 
-    state.current_score = score  # ✅ 修正字段
+    state.current_score = score  # 供 aggregator 写入 history[-1].score / Fed to aggregator
     logger.info(
         "critic_node: score=%.4f progress=%s/%s section=%s/%s elapsed=%.2fs",
         score,
@@ -388,9 +445,9 @@ def critic_node(state: GraphState) -> GraphState:
     return state
 
 
-#LLM版本---------------------------------------------------------------
 def critic_node_llm(state: GraphState) -> GraphState:
-    # 拿到最近的一次修改记录
+    """LLM 对 history 最后一条 before/after 打分（仅评价当前这次改写）。"""
+    # 与本轮 editor 输出对应的那条 history / Matches latest editor append
     if not state.history:
         logger.warning("critic_node: No history found to evaluate!")
         return state
@@ -407,14 +464,21 @@ def critic_node_llm(state: GraphState) -> GraphState:
     chain = prompt | llm_structured_critic
 
     try:
-        # 执行调用
+        logger.info(
+            "critic_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "section_id=%s before_chars=%s after_chars=%s",
+            last_history.section_id,
+            len(last_history.before),
+            len(last_history.after),
+        )
+        _flush_log_handlers()
         result = chain.invoke({
             "before": last_history.before,
             "after": last_history.after
         })
         score = result.score
     except Exception as e:
-        logger.error("critic_node 打分失败: %s", e)
+        logger.error("critic_node_llm failed: %s", e, exc_info=True)
         score = 0.5  # 报错时的保底分
 
     state.current_score = score
@@ -429,22 +493,18 @@ def critic_node_llm(state: GraphState) -> GraphState:
     
     return state
 
-# =========================
-# 5️⃣ Aggregator：更新全文 + best + history
-# =========================
 def aggregator_node(state: GraphState):
+    """渲染全文；将 current_score 与「该段上次采纳分」比较，决定采纳或回滚并更新跳过逻辑。
+    Re-render full TeX; accept/reject vs last accepted score for same section; update skips."""
     for section in state.sections:
         section.content = strip_leading_section_command(section.content)
     new_tex = render_sections(state.sections)
 
     state.current_tex = new_tex
 
-    # ✅ 防崩保护
     if not state.history:
         logger.warning("aggregator_node: history is empty, skipping update")
         return state
-    # 🔥 更新“最后一条 history”
-
     last = state.history[-1]
     last.score = state.current_score
 
@@ -456,10 +516,10 @@ def aggregator_node(state: GraphState):
         ),
         None,
     )
+    # 该段尚无采纳记录时基线为 0.0 / Baseline 0.0 if no prior accept for this section
     previous_score = previous_same_section.score if previous_same_section else 0.0
 
     if state.current_score > previous_score:
-        state.best_score = max(state.best_score, state.current_score)
         state.best_tex = state.current_tex
         last.accepted = True
         state.section_no_improve_rounds[last.section_id] = 0
@@ -507,10 +567,8 @@ def aggregator_node(state: GraphState):
     return state
 
 
-# =========================
-# 6️⃣ 切换下一个 section
-# =========================
 def next_section(state: GraphState) -> GraphState:
+    """线性扫描下一活跃段落索引（跳过已在 skipped_section_ids 中的段）。"""
     state.current_section_index = _next_active_section_index(
         state,
         state.current_section_index + 1,
@@ -523,10 +581,8 @@ def next_section(state: GraphState) -> GraphState:
     return state
 
 
-# =========================
-# 7️⃣ 判断是否还有 section
-# =========================
 def has_more_sections(state: GraphState) -> str:
+    """路由：仍有未处理（且未跳过）的段 → reviewer；否则进入 iteration_step。"""
     state.current_section_index = _next_active_section_index(state, state.current_section_index)
     if state.current_section_index < len(state.sections):
         return "reviewer"
@@ -534,9 +590,8 @@ def has_more_sections(state: GraphState) -> str:
         return "iteration_step"
 
 
-# =========================
-# 8️⃣ 迭代控制（是否继续循环）
 def iteration_step(state: GraphState) -> GraphState:
+    """外层轮次结束：递增 iteration，根据本轮采纳数设置提前停止标记，并将指针重置到首个活跃段。"""
     accepted_count = state.iteration_accepted_count
     state.iteration += 1
     state.stop_due_to_no_document_improve = accepted_count == 0
@@ -554,7 +609,10 @@ def iteration_step(state: GraphState) -> GraphState:
         state.stop_due_to_no_document_improve,
     )
     return state
+
+
 def route_after_iteration(state: GraphState) -> str:
+    """外层路由：达最大轮次、上一轮全文无改进、或无活跃段 → end；否则回到 reviewer。"""
     if state.iteration >= state.max_iterations:
         return "end"
     if state.stop_due_to_no_document_improve:

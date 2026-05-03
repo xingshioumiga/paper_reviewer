@@ -52,7 +52,7 @@
 - 原理：
   - 用 `monkeypatch` 固定随机评分为常数，避免结果每次不一样。
   - 调用 `graph.invoke`。
-  - 检查迭代次数、history 是否生成、best_score 是否更新。
+  - 检查迭代次数、history 是否生成、`section_score_summary` 中是否有合理分数。
 
 ## 4. 你平时怎么用（最简单操作）
 

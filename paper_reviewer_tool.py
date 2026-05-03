@@ -1,3 +1,8 @@
+"""LaTeX parsing helpers: split by ``\\section``, strip duplicated headings, re-render.
+
+将论文 TeX 按真实 \\section 命令切块、清理 LLM 重复标题并拼回全文。
+"""
+
 from langgraph_state import Section
 
 
@@ -89,7 +94,8 @@ def _find_section_commands(tex: str) -> list[tuple[int, int]]:
 
 
 def split_into_sections(tex: str) -> list[Section]:
-    """将 LaTeX 全文切分为 Section 列表，正文保留到下一个 section 之前。"""
+    """将全文按 \\section 切成 Section 列表；每段正文直到下一节前。
+    Split full TeX into sections; body runs until the next section command."""
     commands = _find_section_commands(tex)
     sections = []
 
@@ -127,7 +133,8 @@ def strip_leading_section_command(content: str) -> str:
 
 
 def render_sections(sections: list[Section]) -> str:
-    """把 Section 列表重新渲染成 LaTeX，统一避免重复 section 命令。"""
+    """将 Section 列表拼回单一 TeX；去掉正文中误重复的 \\section。
+    Join sections into one TeX string; strip stray leading section commands in bodies."""
     return "\n\n".join(
         f"{section.title}\n{strip_leading_section_command(section.content)}"
         for section in sections

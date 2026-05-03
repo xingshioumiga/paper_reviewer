@@ -28,7 +28,6 @@ def test_aggregator_compares_against_previous_same_section_and_rolls_back():
         ),
     ]
     state.current_score = 0.7
-    state.best_score = 0.8
     state.best_tex = "\\section{Intro}\nbetter intro"
 
     result = aggregator_node(state)
@@ -65,7 +64,6 @@ def test_aggregator_accepts_when_score_beats_previous_same_section():
         ),
     ]
     state.current_score = 0.9
-    state.best_score = 0.8
     state.section_no_improve_rounds = {"sec_0": 2}
 
     result = aggregator_node(state)
@@ -73,7 +71,6 @@ def test_aggregator_accepts_when_score_beats_previous_same_section():
     assert result.history[-1].score == 0.9
     assert result.history[-1].accepted is True
     assert result.sections[0].content == "best intro"
-    assert result.best_score == 0.9
     assert result.section_no_improve_rounds["sec_0"] == 0
     assert result.iteration_accepted_count == 1
 

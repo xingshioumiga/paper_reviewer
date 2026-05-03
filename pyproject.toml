@@ -1,3 +1,10 @@
+[project]
+name = "paper-reviewer"
+version = "0.2.0"
+description = "LangGraph LaTeX paper reviewer with OpenAI-compatible LLMs (e.g. Ollama)"
+requires-python = ">=3.10"
+readme = "README.md"
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
