@@ -11,8 +11,15 @@ log_dir: logs
 ollama_healthcheck: true
 
 llm:
+  # Backend selection:
+  # - "openai_compatible" (default): Standard OpenAI format, best for production/cloud APIs
+  # - "ollama_native": Ollama native API with think:false support (fixes Qwen3.5 thinking mode)
+  backend: openai_compatible
+
   base_url: http://127.0.0.1:11434/v1
   api_key: ollama
+
+  # Example 1: Qwen2.5 series (works with both backends, no thinking mode)
   reviewer:
     model: qwen2.5:14b
     temperature: 0.1
@@ -22,3 +29,15 @@ llm:
   critic:
     model: qwen2.5:14b
     temperature: 0.0
+
+  # Example 2: Qwen3.5 series (requires backend: ollama_native to disable thinking)
+  # Uncomment below and set backend: ollama_native above:
+  # reviewer:
+  #   model: qwen3.5:9b
+  #   temperature: 0.1
+  # editor:
+  #   model: qwen3.5:9b
+  #   temperature: 0.7
+  # critic:
+  #   model: qwen3.5:9b
+  #   temperature: 0.0

@@ -4,23 +4,141 @@
 Mock 节点用于快速验证；`*_llm` 节点通过 ``init_llms_from_config`` 使用配置文件中的 LLM。
 """
 
+import json
 import logging
+import os
 import random
+import sys
 import time
+from typing import Any, List, Optional, Type, TypeVar
 
 from langgraph_state import GraphState, HistoryItem, Issue
 from paper_reviewer_tool import render_sections, split_into_sections, strip_leading_section_command
 # from langchain_core.output_parsers import StrOutputParser
 
 from langchain_openai import ChatOpenAI
+try:
+    from langchain_community.chat_models import Ollama
+    _OLLAMA_AVAILABLE = True
+except ImportError:
+    _OLLAMA_AVAILABLE = False
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
-from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from runtime_config import DEFAULT_CONFIG, merge_config
 
 
-# LLM 结构化输出容器（与 ChatOpenAI.with_structured_output 配合）。
+T = TypeVar("T", bound=BaseModel)
+
+
+# 可选的流式调试：设置环境变量 DEBUG_LLM_STREAM=1 可在终端实时看到原始 token（用于确认 LLM 正在响应）。
+# Optional streaming debug: set env DEBUG_LLM_STREAM=1 to see raw tokens in terminal (confirms LLM is responding).
+class _DebugStreamingHandler(BaseCallbackHandler):
+    """将 LLM 生成的 token 实时打印到 stderr（不干扰结构化输出）。"""
+
+    def __init__(self, prefix: str = "") -> None:
+        self.prefix = prefix
+
+    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+        # 打印到 stderr，避免污染 stdout/结构化解析
+        sys.stderr.write(f"{self.prefix}{token}")
+        sys.stderr.flush()
+
+    def on_llm_end(self, *args: Any, **kwargs: Any) -> None:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
+        sys.stderr.write(f"\n[stream error: {error}]\n")
+        sys.stderr.flush()
+
+
+def _maybe_streaming_callbacks(role: str) -> list[BaseCallbackHandler] | None:
+    """若设置了 DEBUG_LLM_STREAM=1，返回流式回调列表，否则 None。"""
+    if os.getenv("DEBUG_LLM_STREAM", "").strip() in ("1", "true", "yes"):
+        return [_DebugStreamingHandler(prefix=f"[{role}] ")]
+    return None
+
+
+# =========================
+# Ollama 原生 API 支持（支持 think: false 等原生特性）
+# =========================
+class OllamaStructuredLLM:
+    """包装 Ollama 原生客户端，支持结构化输出和禁用 thinking 模式。
+
+    适用于 Qwen3.5 等默认开启 thinking 的模型，通过原生 API 的 options 禁用。
+    """
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str = "http://localhost:11434",
+        temperature: float = 0.7,
+        disable_thinking: bool = True,
+        role: str = "",
+        timeout: float | None = None,
+    ) -> None:
+        if not _OLLAMA_AVAILABLE:
+            raise ImportError(
+                "langchain_community is required for Ollama native backend. "
+                "Install: pip install langchain-community"
+            )
+        # 移除 /v1 后缀，Ollama 原生 API 使用根路径
+        base_url_clean = base_url.replace("/v1", "").rstrip("/")
+        self.model = model
+        self.role = role
+        self.disable_thinking = disable_thinking
+
+        # Ollama 原生选项
+        options = {"temperature": temperature}
+        if disable_thinking:
+            # Qwen3.5 等模型支持 think 选项，设为 false 关闭 thinking 模式
+            options["think"] = False
+
+        self.llm = Ollama(
+            model=model,
+            base_url=base_url_clean,
+            options=options,
+        )
+        logger.debug("Ollama native client created: model=%s, think=%s", model, disable_thinking)
+
+    def invoke(self, messages: list, output_schema: type[T]) -> T:
+        """调用 Ollama 并解析为结构化输出。"""
+        response = self.llm.invoke(messages)
+        return self._parse_response(response, output_schema)
+
+    def _parse_response(self, content: str, schema: type[T]) -> T:
+        """从模型响应中提取 JSON 并解析为 Pydantic 模型。"""
+        # 尝试直接解析（如果模型返回纯 JSON）
+        try:
+            return schema.parse_raw(content)
+        except Exception:
+            pass
+
+        # 尝试从 markdown 代码块中提取 JSON
+        import re
+        json_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)```', content)
+        for block in json_blocks:
+            try:
+                return schema.parse_raw(block.strip())
+            except Exception:
+                continue
+
+        # 尝试从文本中提取第一个 JSON 对象
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            try:
+                return schema.parse_raw(json_match.group(0))
+            except Exception as e:
+                raise ValueError(f"Failed to parse JSON from response: {content[:200]}...") from e
+
+        raise ValueError(f"No valid JSON found in response: {content[:200]}...")
+
+
+# LLM 结构化输出容器
 # Pydantic wrappers for structured LLM outputs.
 class ReviewOutput(BaseModel):
     issues: List[Issue] = Field(description="段落中发现的问题列表")
@@ -36,6 +154,83 @@ class EditorOutput(BaseModel):
 # 定义一个容器，方便 LLM 一次性返回评分结果，结构化输出
 class ScoreOutput(BaseModel):
     score: float = Field(description="0到1之间的浮点数评分，0.9表示完美，0.5表示无改进")
+
+
+# =========================
+# Ollama 原生 Chain 类（放在 Output 类定义后避免前向引用）
+# =========================
+class OllamaReviewerChain:
+    """Ollama 原生的审稿链，返回 ReviewOutput。"""
+
+    def __init__(self, llm: OllamaStructuredLLM) -> None:
+        self.llm = llm
+        self.system_prompt = (
+            "你是一位顶尖物理学期刊的资深审稿人，同时也是 LaTeX 专家。"
+            "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
+            "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
+            "请保持专业、严谨的态度。最多返回 5 个最重要的问题。"
+            "你必须以 JSON 格式返回结果，格式如下：\n"
+            '{"issues": [{"section_id": "...", "problem": "...", "severity": "...", "span": "..."}]}'
+        )
+
+    def invoke(self, inputs: dict[str, Any]) -> ReviewOutput:
+        title = inputs["title"]
+        content = inputs["content"]
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=f"标题: {title}\n\n内容:\n{content}"),
+        ]
+        return self.llm.invoke(messages, ReviewOutput)
+
+
+class OllamaEditorChain:
+    """Ollama 原生的编辑链，返回 EditorOutput。"""
+
+    def __init__(self, llm: OllamaStructuredLLM) -> None:
+        self.llm = llm
+        self.system_prompt = (
+            "你是一位资深的学术写作润色专家，擅长改进英文学术论文的表达。"
+            "你的任务是：1) 修复语法错误；2) 提升学术写作的专业性；3) 优化句子结构，使其更流畅。"
+            "请直接返回优化后的 LaTeX 段落内容，严禁包含任何 Markdown 标签、解释文字或开场白。"
+            "你必须以 JSON 格式返回结果，格式如下：\n"
+            '{"refined_latex": "..."}'
+        )
+
+    def invoke(self, inputs: dict[str, Any]) -> EditorOutput:
+        title = inputs.get("title", "")
+        content = inputs["content"]
+        issues = inputs.get("issues", [])
+        issues_text = "\n".join([f"- {i.problem} (严重性: {i.severity})" for i in issues])
+
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(
+                content=f"标题: {title}\n\n当前段落内容:\n{content}\n\n需要修复的问题:\n{issues_text}\n\n请提供优化后的 LaTeX 段落。"
+            ),
+        ]
+        return self.llm.invoke(messages, EditorOutput)
+
+
+class OllamaCriticChain:
+    """Ollama 原生的评分链，返回 ScoreOutput。"""
+
+    def __init__(self, llm: OllamaStructuredLLM) -> None:
+        self.llm = llm
+        self.system_prompt = (
+            "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。"
+            "注意，评分为0到1之间的浮点数评分，0.9表示完美，0.5表示无改进，禁止输出任何大于1的值。"
+            "你必须以 JSON 格式返回结果，格式如下：\n"
+            '{"score": 0.75}'
+        )
+
+    def invoke(self, inputs: dict[str, Any]) -> ScoreOutput:
+        before = inputs["before"]
+        after = inputs["after"]
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=f"修改前: {before}\n\n修改后: {after}"),
+        ]
+        return self.llm.invoke(messages, ScoreOutput)
 
 
 # 运行期由 init_llms_from_config 填充；import 时用 DEFAULT_CONFIG 预初始化一次。
@@ -77,46 +272,101 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         except (TypeError, ValueError):
             pass
 
-    def _chat_kw(temperature: float, model: str) -> dict[str, Any]:
-        kw: dict[str, Any] = {
-            "model": model,
-            "openai_api_key": api_key,
-            "base_url": base_url,
-            "temperature": temperature,
-        }
-        if request_timeout is not None:
-            kw["request_timeout"] = request_timeout
-        return kw
+    # 选择后端：openai_compatible（默认）或 ollama_native
+    backend = str(llm_cfg.get("backend", "openai_compatible")).lower()
+    use_ollama_native = backend == "ollama_native"
 
-    llm_ini_reviewer = ChatOpenAI(
-        **_chat_kw(float(rv.get("temperature", 0.1)), str(rv.get("model", "qwen2.5:14b"))),
-    )
-    llm_ini_editor = ChatOpenAI(
-        **_chat_kw(float(ed.get("temperature", 0.7)), str(ed.get("model", "qwen2.5:14b"))),
-    )
-    llm_ini_critic = ChatOpenAI(
-        **_chat_kw(float(cr.get("temperature", 0.0)), str(cr.get("model", "qwen2.5:14b"))),
-    )
+    if use_ollama_native:
+        # Ollama 原生 API 模式（支持 think: false 等原生选项）
+        if not _OLLAMA_AVAILABLE:
+            raise ImportError(
+                "backend='ollama_native' requires langchain_community. "
+                "Install: pip install langchain-community"
+            )
+        logger.info(
+            "Using Ollama native backend (think=false) for models: "
+            "reviewer=%s, editor=%s, critic=%s",
+            rv.get("model", "qwen2.5:14b"),
+            ed.get("model", "qwen2.5:14b"),
+            cr.get("model", "qwen2.5:14b"),
+        )
 
-    llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
-    llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
-    llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
+        ollama_reviewer = OllamaStructuredLLM(
+            model=str(rv.get("model", "qwen2.5:14b")),
+            base_url=base_url,
+            temperature=float(rv.get("temperature", 0.1)),
+            disable_thinking=True,
+            role="reviewer",
+        )
+        ollama_editor = OllamaStructuredLLM(
+            model=str(ed.get("model", "qwen2.5:14b")),
+            base_url=base_url,
+            temperature=float(ed.get("temperature", 0.7)),
+            disable_thinking=True,
+            role="editor",
+        )
+        ollama_critic = OllamaStructuredLLM(
+            model=str(cr.get("model", "qwen2.5:14b")),
+            base_url=base_url,
+            temperature=float(cr.get("temperature", 0.0)),
+            disable_thinking=True,
+            role="critic",
+        )
 
+        # 使用自定义链包装 Ollama 客户端
+        llm_structured_reviewer = OllamaReviewerChain(ollama_reviewer)
+        llm_strucured_editor = OllamaEditorChain(ollama_editor)
+        llm_structured_critic = OllamaCriticChain(ollama_critic)
+
+    else:
+        # OpenAI 兼容模式（默认，适合生产部署和多云接入）
+        def _chat_kw(temperature: float, model: str, role: str) -> dict[str, Any]:
+            kw: dict[str, Any] = {
+                "model": model,
+                "openai_api_key": api_key,
+                "base_url": base_url,
+                "temperature": temperature,
+            }
+            if request_timeout is not None:
+                kw["request_timeout"] = request_timeout
+            # 若开启流式调试，传入回调；不影响整体逻辑，仅用于观察 LLM 是否正在生成。
+            callbacks = _maybe_streaming_callbacks(role)
+            if callbacks:
+                kw["callbacks"] = callbacks
+                kw["streaming"] = True
+            return kw
+
+        llm_ini_reviewer = ChatOpenAI(
+            **_chat_kw(float(rv.get("temperature", 0.1)), str(rv.get("model", "qwen2.5:14b")), "reviewer"),
+        )
+        llm_ini_editor = ChatOpenAI(
+            **_chat_kw(float(ed.get("temperature", 0.7)), str(ed.get("model", "qwen2.5:14b")), "editor"),
+        )
+        llm_ini_critic = ChatOpenAI(
+            **_chat_kw(float(cr.get("temperature", 0.0)), str(cr.get("model", "qwen2.5:14b")), "critic"),
+        )
+
+        llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
+        llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
+        llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
+
+    # 统一日志输出
     logging.getLogger(__name__).info(
-        "init_llms_from_config: base_url=%s request_timeout=%r "
+        "init_llms_from_config: backend=%s base_url=%s request_timeout=%r "
         "reviewer_model=%s editor_model=%s critic_model=%s",
+        backend,
         base_url,
-        llm_ini_reviewer.request_timeout,
+        request_timeout,
         str(rv.get("model", "qwen2.5:14b")),
         str(ed.get("model", "qwen2.5:14b")),
         str(cr.get("model", "qwen2.5:14b")),
     )
 
 
-init_llms_from_config({})
-
-
 logger = logging.getLogger(__name__)
+
+
+init_llms_from_config({})
 
 
 def _flush_log_handlers() -> None:
