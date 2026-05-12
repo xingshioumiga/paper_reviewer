@@ -1,6 +1,6 @@
 [project]
 name = "paper-reviewer"
-version = "0.2.1"
+version = "0.3.0"
 description = "LangGraph LaTeX paper reviewer with OpenAI-compatible LLMs (e.g. Ollama)"
 requires-python = ">=3.10"
 readme = "README.md"
