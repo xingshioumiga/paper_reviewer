@@ -43,6 +43,8 @@ class GraphState(BaseModel):
     Global graph state: current draft, sections list, history, and stop flags."""
 
     original_tex: str
+    # proofread | rewrite — selects system prompts for this run only (see prompt_modes).
+    edit_mode: str = "proofread"
     current_tex: str = ""
     run_started_at: float = 0.0
 

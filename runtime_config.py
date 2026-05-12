@@ -18,6 +18,10 @@ import yaml
 DEFAULT_CONFIG: dict[str, Any] = {
     "input_path": "private-draft.tex",
     "output_path": "output.tex",
+    # proofread = minimal edits; rewrite = broader developmental polish (see README).
+    "mode": "proofread",
+    # Optional per-mode system prompt overrides: modes.<proofread|rewrite>.<reviewer|editor|critic>
+    "modes": {},
     "max_iterations": 1,
     "max_no_improve": 100,
     "log_level": "INFO",

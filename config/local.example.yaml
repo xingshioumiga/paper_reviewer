@@ -4,6 +4,15 @@
 
 input_path: private-draft.tex
 output_path: output.tex
+
+# proofread = minimal edits (default) | rewrite = broader developmental polish. CLI --mode overrides.
+mode: proofread
+
+# Optional: override built-in system strings per mode and role (reviewer | editor | critic).
+# modes:
+#   rewrite:
+#     editor: "Your custom editor system prompt (keep JSON output rules)..."
+
 max_iterations: 1
 max_no_improve: 100
 log_level: INFO

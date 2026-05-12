@@ -17,6 +17,7 @@ Chinese documentation: **[README_zh.md](README_zh.md)**.
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [CLI](#cli)
+- [Edit modes (proofread vs rewrite)](#edit-modes-proofread-vs-rewrite)
 - [Iteration semantics](#iteration-semantics)
 - [LLM backends](#llm-backends)
 - [Logging and exit codes](#logging-and-exit-codes)
@@ -31,7 +32,7 @@ Chinese documentation: **[README_zh.md](README_zh.md)**.
 - **Multi-role graph**: Reviewer (issues) → Editor (refined LaTeX) → Critic (0–1 score) → Aggregator (accept / rollback).
 - **Outer iterations**: configurable max full-document passes and per-section “no improvement” limits.
 - **OpenAI-compatible API** by default (e.g. local [Ollama](https://ollama.com/) `/v1`), plus optional **Ollama native** backend for models that need thinking disabled (e.g. Qwen3.5).
-- **Mock graph** (`run_demo.py`) for fast routing and state checks **without** calling an LLM.
+- **Edit modes**: `proofread` (minimal, span-focused edits) vs `rewrite` (developmental polish: clearer structure and flow while preserving science and LaTeX integrity). Selected per run via `--mode` or YAML `mode`; optional per-role prompt overrides under `modes`.
 - **CLI + YAML** with clear precedence; file logging; optional Ollama health probe before the run.
 - **Tests** (pytest) and **ruff** for linting.
 
@@ -57,7 +58,7 @@ flowchart LR
 - **`langgraph_state.py`**: Pydantic models for `GraphState`, sections, issues, and history.
 - **`langgraph_nodes.py`**: all node implementations, LLM wiring, and `init_llms_from_config`.
 - **`paper_reviewer_tool.py`**: LaTeX splitting and rendering helpers.
-- **`runtime_config.py`**: default config tree and deep-merge loader for YAML.
+- **`prompt_modes.py`**: built-in system prompts per mode/role and merge with optional YAML `modes` overrides.
 
 ---
 
@@ -121,11 +122,13 @@ python run_demo.py
 python run.py --input sample_manuscript.tex --output output.tex
 ```
 
-**Example with overrides:**
+**Developmental polish (rewrite):**
 
 ```bash
-python run.py --input sample_manuscript.tex --output output.tex --max-iterations 2 --max-no-improve 100
+python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
+
+**Two-phase workflow (separate runs, separate logs):** run once with `--mode rewrite`, then after human edits run again with `--mode proofread` using the previous `.tex` as `--input`. Each invocation has its own in-memory `history` and log file.
 
 Print version:
 
@@ -142,6 +145,8 @@ Default file: **`config/local.yaml`**. Override path with `--config`.
 | Key | Purpose |
 |-----|--------|
 | `input_path` / `output_path` | Default TeX input / output paths |
+| `mode` | `proofread` (default) or `rewrite`; selects reviewer/editor/critic system prompts for this run |
+| `modes` | Optional map: `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` strings override built-in prompts |
 | `max_iterations` | Maximum **outer** full-document passes |
 | `max_no_improve` | Per-section streak cap without beating the best accepted score → section skipped |
 | `log_level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
@@ -165,8 +170,22 @@ See **`config/local.example.yaml`** for commented examples (including `ollama_na
 | `--max-iterations` | Outer iteration cap |
 | `--max-no-improve` | Per-section no-improve cap |
 | `--log-level` | Logging level |
+| `--mode` | `proofread` or `rewrite`; overrides YAML `mode` |
 | `--allow-llm-failures` | Exit `0` even if LLM calls failed (default: exit `1` when failures occurred) |
 | `--version` | Show version |
+
+---
+
+## Edit modes (proofread vs rewrite)
+
+| Mode | Intent |
+|------|--------|
+| `proofread` | Minimal edits guided by reviewer issues and spans; critic rewards small, safe improvements. **Default** — matches the original project behaviour. |
+| `rewrite` | Broader sentence- and paragraph-level polish (clarity, cohesion, terminology); still forbids inventing data, changing conclusions, or stripping `\cite`/`\ref`/`\label` and math environments. Critic rubric matches this goal. |
+
+**OpenAI-compatible and `ollama_native` paths** both use the same prompt set for the resolved mode. `run.py` logs `mode=...` at startup and LLM nodes log `mode=...` on invoke.
+
+**Precedence:** `--mode` CLI > YAML `mode` > built-in default `proofread`.
 
 ---
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from LangGraph_loop import graph
 from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
+from prompt_modes import normalize_edit_mode
 from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
 
@@ -29,6 +30,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iterations", type=int, help="Override max iterations")
     parser.add_argument("--max-no-improve", type=int, help="Override max no-improve rounds")
     parser.add_argument("--log-level", help="Override log level, e.g. INFO/DEBUG")
+    parser.add_argument(
+        "--mode",
+        dest="mode_override",
+        choices=["proofread", "rewrite"],
+        default=None,
+        help="Edit mode (stored on state for consistency; mock graph ignores prompts).",
+    )
     return parser.parse_args()
 
 
@@ -38,6 +46,10 @@ def main() -> None:
     started_at = time.perf_counter()
     args = parse_args()
     config = load_merged_config(Path(args.config_path))
+    if args.mode_override is not None:
+        config["mode"] = args.mode_override
+    else:
+        config["mode"] = normalize_edit_mode(config.get("mode"))
 
     log_level = args.log_level or config.get("log_level", "INFO")
     log_dir = str(config.get("log_dir", "logs"))
@@ -58,9 +70,11 @@ def main() -> None:
         original_tex=original_tex,
         max_iterations=max_iterations,
         max_no_improve=max_no_improve,
+        edit_mode=str(config["mode"]),
     )
     logger.info(
-        "run demo start: input=%s output=%s max_iterations=%s max_no_improve=%s log_file=%s",
+        "run demo start: mode=%s input=%s output=%s max_iterations=%s max_no_improve=%s log_file=%s",
+        config["mode"],
         test_file,
         output_path,
         max_iterations,

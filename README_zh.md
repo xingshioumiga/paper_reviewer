@@ -17,6 +17,7 @@
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [命令行参数](#命令行参数)
+- [编辑模式（订正 / 重写）](#编辑模式订正--重写)
 - [迭代与打分语义](#迭代与打分语义)
 - [LLM 后端](#llm-后端)
 - [日志与退出码](#日志与退出码)
@@ -31,7 +32,7 @@
 - **多节点工作流**：审稿（问题列表）→ 改写（结构化 LaTeX）→ 打分（0–1）→ 聚合（采纳 / 回滚）。
 - **外层迭代**：可配置整稿最多跑几轮、单节连续无提升上限。
 - **默认 OpenAI 兼容接口**（如本机 [Ollama](https://ollama.com/) `/v1`）；可选 **Ollama 原生**后端，便于关闭 thinking 等（如 Qwen3.5）。
-- **Mock 图**（`run_demo.py`）：不调用远程模型，快速验证状态机与路由。
+- **编辑模式**：`proofread`（最小必要修改、按 span 订正）与 `rewrite`（发展性润色：句式与衔接、术语统一等，仍禁止编造数据或破坏 LaTeX/引用）。通过 `--mode` 或 YAML `mode` 每次运行选一种；可在 `modes` 下按角色覆盖内置 system 文案。
 - **YAML + CLI**、文件日志、可选 Ollama 启动前健康检查；**pytest** 与 **ruff** 纳入工作流。
 
 ---
@@ -58,7 +59,7 @@ flowchart LR
 | `langgraph_state.py` | `GraphState`、段落、问题、历史等 Pydantic 模型 |
 | `langgraph_nodes.py` | 各节点实现、`init_llms_from_config` |
 | `paper_reviewer_tool.py` | TeX 切分与回写渲染 |
-| `runtime_config.py` | 默认配置与 YAML 深度合并 |
+| `prompt_modes.py` | 各模式内置 system 文案及 YAML `modes` 合并 |
 
 ---
 
@@ -122,11 +123,13 @@ python run_demo.py
 python run.py --input sample_manuscript.tex --output output.tex
 ```
 
-**带参数覆盖示例：**
+**发展性润色（重写模式）：**
 
 ```bash
-python run.py --input sample_manuscript.tex --output output.tex --max-iterations 2 --max-no-improve 100
+python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
+
+**两阶段工作流（两次独立进程、两份独立日志）：** 第一次用 `--mode rewrite` 得到一版 `.tex`，经导师或合作者人工修改后，第二次将上一版作为 `--input`，并用 `--mode proofread` 做终稿式订正。每次运行的 `history` 仅在当次内存中，不会跨 run 混淆。
 
 查看版本：
 
@@ -143,6 +146,8 @@ python run.py --version
 | 配置项 | 含义 |
 |--------|------|
 | `input_path` / `output_path` | 默认输入 / 输出 TeX 路径 |
+| `mode` | `proofread`（默认）或 `rewrite`；决定本 run 三角色 system 提示词 |
+| `modes` | 可选：在 `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` 覆盖对应内置文案 |
 | `max_iterations` | 外层「整稿轮次」上限 |
 | `max_no_improve` | 单节连续未超过历史已采纳分时，达到该次数后跳过该节 |
 | `log_level` | 日志级别 |
@@ -166,8 +171,22 @@ python run.py --version
 | `--max-iterations` | 外层迭代上限 |
 | `--max-no-improve` | 单节无提升次数上限 |
 | `--log-level` | 日志级别 |
+| `--mode` | `proofread` 或 `rewrite`，覆盖 YAML 中的 `mode` |
 | `--allow-llm-failures` | LLM 出错时仍返回退出码 0（默认：有错则退出码 1） |
 | `--version` | 打印版本 |
+
+---
+
+## 编辑模式（订正 / 重写）
+
+| 模式 | 说明 |
+|------|------|
+| `proofread` | 以审稿问题与 span 为牵引做**最小必要修改**；Critic 按「小改动下是否改善」打分。**默认**，与项目原有行为一致。 |
+| `rewrite` | 允许在整段内**重组句式、加强衔接、统一术语**；禁止虚构实验/数据/结论，禁止删除或破坏 `\cite`、`\ref`、`\label` 及数学环境；Critic 的评分标准与此一致。 |
+
+**OpenAI 兼容**与 **`ollama_native`** 两条后端均使用当前模式下的同一套文案；`run.py` 启动日志与各 LLM 节点调用日志中会带 `mode=...`。
+
+**优先级：** 命令行 `--mode` **优于** YAML `mode` **优于** 内置默认 `proofread`。
 
 ---
 

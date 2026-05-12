@@ -29,9 +29,27 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from runtime_config import DEFAULT_CONFIG, merge_config
-
+from prompt_modes import build_prompt_bundle, normalize_edit_mode
 
 T = TypeVar("T", bound=BaseModel)
+
+_PROMPT_BUNDLE: dict[str, dict[str, str]] | None = None
+
+
+def refresh_prompt_bundle(merged_config: dict[str, Any]) -> None:
+    """Rebuild global prompt table from merged YAML (call after each ``init_llms_from_config``)."""
+    global _PROMPT_BUNDLE
+    _PROMPT_BUNDLE = build_prompt_bundle(merged_config)
+
+
+def system_prompt_for(role: str, mode: str) -> str:
+    """Return system prompt for ``reviewer`` | ``editor`` | ``critic`` and current edit mode."""
+    if role not in ("reviewer", "editor", "critic"):
+        raise ValueError(f"invalid role: {role}")
+    bundle = _PROMPT_BUNDLE if _PROMPT_BUNDLE is not None else build_prompt_bundle({})
+    m = normalize_edit_mode(mode)
+    per_mode = bundle.get(m) or bundle["proofread"]
+    return per_mode[role]
 
 
 def _pydantic_validate_json(schema: type[T], raw: str) -> T:
@@ -250,19 +268,9 @@ from langchain_core.runnables import Runnable
 class OllamaReviewerChain(Runnable):
     """Ollama 原生的审稿链，返回 ReviewOutput。"""
 
-    def __init__(self, llm: OllamaStructuredLLM) -> None:
+    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
-        self.system_prompt = (
-            "你是一位顶尖物理学期刊的资深审稿人，同时也是 LaTeX 专家。"
-            "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
-            "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
-            "请保持专业、严谨的态度。最多返回 5 个最重要的问题。"
-            "【JSON 硬性要求】输出必须是单一合法 JSON 对象；problem 每条不超过 120 个中文字符；"
-            "字符串内如需提及反斜杠应写成双反斜杠；不要用 Markdown 代码围栏；不要用省略号截断未闭合的字符串。"
-            "section_id 使用调用方当前段落占位符或与正文一致的节标题即可，不要输出过长的 LaTeX 命令串。"
-            "你必须以 JSON 格式返回结果，格式如下：\n"
-            '{"issues": [{"section_id": "...", "problem": "...", "severity": "...", "span": "..."}]}'
-        )
+        self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ReviewOutput:
         # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
@@ -283,15 +291,9 @@ class OllamaReviewerChain(Runnable):
 class OllamaEditorChain(Runnable):
     """Ollama 原生的编辑链，返回 EditorOutput。"""
 
-    def __init__(self, llm: OllamaStructuredLLM) -> None:
+    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
-        self.system_prompt = (
-            "你是一位资深的学术写作润色专家，擅长改进英文学术论文的表达。"
-            "你的任务是：1) 修复语法错误；2) 提升学术写作的专业性；3) 优化句子结构，使其更流畅。"
-            "请直接返回优化后的 LaTeX 段落内容，严禁包含任何 Markdown 标签、解释文字或开场白。"
-            "你必须以 JSON 格式返回结果，格式如下：\n"
-            '{"refined_latex": "..."}'
-        )
+        self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> EditorOutput:
         # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
@@ -314,14 +316,9 @@ class OllamaEditorChain(Runnable):
 class OllamaCriticChain(Runnable):
     """Ollama 原生的评分链，返回 ScoreOutput。"""
 
-    def __init__(self, llm: OllamaStructuredLLM) -> None:
+    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
-        self.system_prompt = (
-            "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。"
-            "注意，评分为0到1之间的浮点数评分，0.9表示完美，0.5表示无改进，禁止输出任何大于1的值。"
-            "你必须以 JSON 格式返回结果，格式如下：\n"
-            '{"score": 0.75}'
-        )
+        self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ScoreOutput:
         # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
@@ -354,6 +351,11 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
     global llm_structured_reviewer, llm_strucured_editor, llm_structured_critic
 
     merged = merge_config(DEFAULT_CONFIG, config or {})
+    # Canonical edit mode + prompt bundle (OpenAI 节点按 state.edit_mode 取词；Ollama 链在 init 时绑定当前 mode)。
+    mode_resolved = normalize_edit_mode(merged.get("mode"))
+    merged["mode"] = mode_resolved
+    refresh_prompt_bundle(merged)
+
     llm_cfg = merged.get("llm", {})
     base_url = str(llm_cfg.get("base_url", "http://localhost:11434/v1"))
     api_key = str(llm_cfg.get("api_key", "ollama"))
@@ -417,10 +419,16 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             role="critic",
         )
 
-        # 使用自定义链包装 Ollama 客户端
-        llm_structured_reviewer = OllamaReviewerChain(ollama_reviewer)
-        llm_strucured_editor = OllamaEditorChain(ollama_editor)
-        llm_structured_critic = OllamaCriticChain(ollama_critic)
+        # 使用自定义链包装 Ollama 客户端（system 与当前 mode 一致）
+        llm_structured_reviewer = OllamaReviewerChain(
+            ollama_reviewer, system_prompt_for("reviewer", mode_resolved)
+        )
+        llm_strucured_editor = OllamaEditorChain(
+            ollama_editor, system_prompt_for("editor", mode_resolved)
+        )
+        llm_structured_critic = OllamaCriticChain(
+            ollama_critic, system_prompt_for("critic", mode_resolved)
+        )
 
     else:
         # OpenAI 兼容模式（默认，适合生产部署和多云接入）
@@ -456,8 +464,9 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
 
     # 统一日志输出
     logging.getLogger(__name__).info(
-        "init_llms_from_config: backend=%s base_url=%s request_timeout=%r "
+        "init_llms_from_config: mode=%s backend=%s base_url=%s request_timeout=%r "
         "reviewer_model=%s editor_model=%s critic_model=%s",
+        mode_resolved,
         backend,
         base_url,
         request_timeout,
@@ -547,7 +556,8 @@ def init_node(state: GraphState) -> GraphState:
     state.stop_due_to_no_document_improve = False
     state.llm_failure_count = 0
     logger.info(
-        "init_node: initialized sections=%s max_iterations=%s max_no_improve=%s elapsed=%.2fs",
+        "init_node: mode=%s initialized sections=%s max_iterations=%s max_no_improve=%s elapsed=%.2fs",
+        state.edit_mode,
         len(sections),
         state.max_iterations,
         state.max_no_improve,
@@ -589,13 +599,9 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
     # 定义针对学术论文和 LaTeX 格式的 Prompt
     # 这里我针对大哥你的研究领域，加强了对公式和逻辑的审查要求
+    sys_r = system_prompt_for("reviewer", state.edit_mode)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", (
-            "你是一位顶尖物理学期刊的资深审稿人，同时也是 LaTeX 专家。"
-            "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
-            "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
-            "请保持专业、严谨的态度。最多返回 5 个最重要的问题"
-        )),
+        ("system", sys_r),
         ("human", "标题: {title}\n\n内容:\n{content}")
     ])
 
@@ -604,8 +610,9 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
     try:
         logger.info(
-            "reviewer_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "reviewer_node_llm: mode=%s invoking LLM (HTTP log line appears only after response) "
             "section_id=%s title_chars=%s content_chars=%s",
+            state.edit_mode,
             section.id,
             len(section.title),
             len(section.content),
@@ -707,24 +714,11 @@ def editor_node_llm(state: GraphState):
     f"- [{i.severity}] {i.problem} | span: {i.span}"
     for i in current_section_issues
 ])
-    
+
+    sys_e = system_prompt_for("editor", state.edit_mode)
     # 2. 构建优雅的 ChatPrompt
     prompt = ChatPromptTemplate.from_messages([
-    ("system", (
-        "你是一位顶尖的 LaTeX 润色专家和物理学学术编辑。\n"
-        "你的任务是基于问题列表，对给定段落进行最小必要修改（minimal edit）。\n\n"
-
-        "【严格要求】\n"
-        "1. 仅修改问题涉及的文本片段（由 span 指定），不要重写整个段落。\n"
-        "2. 优先解决 high > medium > low 严重程度的问题。\n"
-        "3. 严禁破坏 LaTeX 语法、公式、命令结构。\n"
-        "4. 不要引入新的内容或改变原有科学含义。\n"
-        "5. 输出必须是完整的 LaTeX 段落。\n"
-        "6. 严禁输出 Markdown、解释说明或额外文本。\n\n"
-
-        "【问题格式说明】\n"
-        "- [severity] problem | span: 原文片段\n"
-    )),
+    ("system", sys_e),
     ("human", (
         "【原始段落】\n"
         "{content}\n\n"
@@ -739,8 +733,9 @@ def editor_node_llm(state: GraphState):
 
     try:
         logger.info(
-            "editor_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "editor_node_llm: mode=%s invoking LLM (HTTP log line appears only after response) "
             "section_id=%s num_issues=%s content_chars=%s",
+            state.edit_mode,
             section.id,
             len(current_section_issues),
             len(section.content),
@@ -811,9 +806,10 @@ def critic_node_llm(state: GraphState) -> GraphState:
         
     last_history = state.history[-1]
 
+    sys_c = system_prompt_for("critic", state.edit_mode)
     # 3. 使用 ChatPromptTemplate 构建 LCEL 链
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是一位严苛的学术期刊编辑。请评价 LaTeX 段落的润色质量，只输出评分。注意，评分为0到1之间的浮点数评分，0.9表示完美，0.5表示无改进,禁止输出任何大于1的值。"),
+        ("system", sys_c),
         ("human", "修改前: {before}\n\n修改后: {after}")
     ])
 
@@ -822,8 +818,9 @@ def critic_node_llm(state: GraphState) -> GraphState:
 
     try:
         logger.info(
-            "critic_node_llm: invoking LLM (HTTP log line appears only after response) "
+            "critic_node_llm: mode=%s invoking LLM (HTTP log line appears only after response) "
             "section_id=%s before_chars=%s after_chars=%s",
+            state.edit_mode,
             last_history.section_id,
             len(last_history.before),
             len(last_history.after),

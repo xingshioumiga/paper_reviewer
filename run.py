@@ -12,6 +12,7 @@ from pathlib import Path
 from _version import __version__
 from langgraph_nodes import init_llms_from_config, section_score_summary
 from langgraph_state import GraphState
+from prompt_modes import normalize_edit_mode
 from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
 from utils.ollama_health import check_ollama_tags
@@ -42,6 +43,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-level", help="INFO / DEBUG / WARNING")
 
     parser.add_argument(
+        "--mode",
+        dest="mode_override",
+        choices=["proofread", "rewrite"],
+        default=None,
+        help=(
+            "Edit mode: proofread (minimal edits) or rewrite (developmental polish). "
+            "Overrides config file."
+        ),
+    )
+
+    parser.add_argument(
         "--allow-llm-failures",
         action="store_true",
         help=(
@@ -69,6 +81,10 @@ def main() -> None:
     started_at = time.perf_counter()
     args = parse_args()
     config = load_merged_config(Path(args.config_path))
+    if args.mode_override is not None:
+        config["mode"] = args.mode_override
+    else:
+        config["mode"] = normalize_edit_mode(config.get("mode"))
 
     # 先配置日志，再初始化 LLM / 跑图，否则 httpx 等库在首次请求完成前可能没有任何文件记录。
     log_level = args.log_level or config.get("log_level", "INFO")
@@ -103,11 +119,13 @@ def main() -> None:
         original_tex=original_tex,
         max_iterations=max_iterations,
         max_no_improve=max_no_improve,
+        edit_mode=str(config["mode"]),
     )
 
     logger.info(
-        "run start (LLM) v%s: input=%s output=%s max_iterations=%s max_no_improve=%s log=%s",
+        "run start (LLM) v%s: mode=%s input=%s output=%s max_iterations=%s max_no_improve=%s log=%s",
         __version__,
+        config["mode"],
         input_file,
         output_path,
         max_iterations,
