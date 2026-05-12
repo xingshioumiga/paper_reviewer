@@ -52,6 +52,11 @@ def system_prompt_for(role: str, mode: str) -> str:
     return per_mode[role]
 
 
+def _escape_langchain_template_literals(s: str) -> str:
+    """``ChatPromptTemplate`` treats ``{...}`` as variables; JSON examples in system text need doubling."""
+    return s.replace("{", "{{").replace("}", "}}")
+
+
 def _pydantic_validate_json(schema: type[T], raw: str) -> T:
     """将 JSON 字符串解析为 Pydantic 模型（兼容 v1 ``parse_raw`` 与 v2 ``model_validate_json``）。"""
     validate = getattr(schema, "model_validate_json", None)
@@ -599,7 +604,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
     # 定义针对学术论文和 LaTeX 格式的 Prompt
     # 这里我针对大哥你的研究领域，加强了对公式和逻辑的审查要求
-    sys_r = system_prompt_for("reviewer", state.edit_mode)
+    sys_r = _escape_langchain_template_literals(system_prompt_for("reviewer", state.edit_mode))
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys_r),
         ("human", "标题: {title}\n\n内容:\n{content}")
@@ -715,7 +720,7 @@ def editor_node_llm(state: GraphState):
     for i in current_section_issues
 ])
 
-    sys_e = system_prompt_for("editor", state.edit_mode)
+    sys_e = _escape_langchain_template_literals(system_prompt_for("editor", state.edit_mode))
     # 2. 构建优雅的 ChatPrompt
     prompt = ChatPromptTemplate.from_messages([
     ("system", sys_e),
@@ -806,7 +811,7 @@ def critic_node_llm(state: GraphState) -> GraphState:
         
     last_history = state.history[-1]
 
-    sys_c = system_prompt_for("critic", state.edit_mode)
+    sys_c = _escape_langchain_template_literals(system_prompt_for("critic", state.edit_mode))
     # 3. 使用 ChatPromptTemplate 构建 LCEL 链
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys_c),
