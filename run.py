@@ -116,9 +116,10 @@ def main() -> None:
     )
 
     # =========================
-    # 🚀 执行 LangGraph（LLM）
+    # 执行 LangGraph（LLM）
     # =========================
-    result = graph.invoke(initial_state)
+    # 计算 recursion_limit: 8 段 x 每段约 5 步 + 余量 = 100
+    result = graph.invoke(initial_state, {"recursion_limit": 100})
 
     # ===== 兼容 dict / model =====
     if isinstance(result, dict):

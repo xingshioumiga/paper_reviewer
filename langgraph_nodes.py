@@ -4,10 +4,10 @@
 Mock 节点用于快速验证；`*_llm` 节点通过 ``init_llms_from_config`` 使用配置文件中的 LLM。
 """
 
-import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from typing import Any, List, Optional, Type, TypeVar
@@ -18,7 +18,7 @@ from paper_reviewer_tool import render_sections, split_into_sections, strip_lead
 
 from langchain_openai import ChatOpenAI
 try:
-    from langchain_community.chat_models import Ollama
+    from langchain_ollama import OllamaLLM
     _OLLAMA_AVAILABLE = True
 except ImportError:
     _OLLAMA_AVAILABLE = False
@@ -32,6 +32,61 @@ from runtime_config import DEFAULT_CONFIG, merge_config
 
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _pydantic_validate_json(schema: type[T], raw: str) -> T:
+    """将 JSON 字符串解析为 Pydantic 模型（兼容 v1 ``parse_raw`` 与 v2 ``model_validate_json``）。"""
+    validate = getattr(schema, "model_validate_json", None)
+    if callable(validate):
+        return validate(raw)
+    return schema.parse_raw(raw)  # type: ignore[call-arg]
+
+
+def _balanced_json_object(text: str, start_idx: int) -> str | None:
+    """从 ``start_idx`` 处的 ``{`` 起截取平衡的 ``{...}``，字符串内需跳过未配对括号（近似 JSON 规则）。"""
+    if start_idx >= len(text) or text[start_idx] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for j in range(start_idx, len(text)):
+        c = text[j]
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start_idx : j + 1]
+    return None
+
+
+def _iter_json_object_candidates(content: str, max_starts: int = 32) -> list[str]:
+    """从左到右枚举可能的顶层 JSON 对象子串（用于模型夹杂解释文字或输出残缺 JSON 时）。"""
+    candidates: list[str] = []
+    start_search = 0
+    seen: set[str] = set()
+    while len(candidates) < max_starts:
+        i = content.find("{", start_search)
+        if i < 0:
+            break
+        chunk = _balanced_json_object(content, i)
+        if chunk and chunk not in seen:
+            seen.add(chunk)
+            candidates.append(chunk)
+        start_search = i + 1
+    return candidates
 
 
 # 可选的流式调试：设置环境变量 DEBUG_LLM_STREAM=1 可在终端实时看到原始 token（用于确认 LLM 正在响应）。
@@ -80,11 +135,12 @@ class OllamaStructuredLLM:
         disable_thinking: bool = True,
         role: str = "",
         timeout: float | None = None,
+        num_predict: int | None = 8192,
     ) -> None:
         if not _OLLAMA_AVAILABLE:
             raise ImportError(
-                "langchain_community is required for Ollama native backend. "
-                "Install: pip install langchain-community"
+                "langchain-ollama is required for Ollama native backend. "
+                "Install: pip install langchain-ollama"
             )
         # 移除 /v1 后缀，Ollama 原生 API 使用根路径
         base_url_clean = base_url.replace("/v1", "").rstrip("/")
@@ -93,49 +149,78 @@ class OllamaStructuredLLM:
         self.disable_thinking = disable_thinking
 
         # Ollama 原生选项
-        options = {"temperature": temperature}
-        if disable_thinking:
-            # Qwen3.5 等模型支持 think 选项，设为 false 关闭 thinking 模式
-            options["think"] = False
+        # 注意：langchain-ollama 使用 reasoning 参数控制思考模式，不是 think
+        # reasoning=False 关闭 thinking 模式，reasoning=None 使用默认行为
+        reasoning = False if disable_thinking else None
 
-        self.llm = Ollama(
-            model=model,
-            base_url=base_url_clean,
-            options=options,
+        llm_kw: dict[str, Any] = {
+            "model": model,
+            "base_url": base_url_clean,
+            "temperature": temperature,
+            "reasoning": reasoning,
+        }
+        if num_predict is not None:
+            llm_kw["num_predict"] = num_predict
+        self.llm = OllamaLLM(**llm_kw)
+        logger.debug(
+            "Ollama native client created: model=%s, reasoning=%s, num_predict=%s",
+            model,
+            reasoning,
+            num_predict,
         )
-        logger.debug("Ollama native client created: model=%s, think=%s", model, disable_thinking)
 
     def invoke(self, messages: list, output_schema: type[T]) -> T:
-        """调用 Ollama 并解析为结构化输出。"""
-        response = self.llm.invoke(messages)
-        return self._parse_response(response, output_schema)
+        """调用 Ollama 并解析为结构化输出；解析失败时有限次重试（缓解残缺 JSON）。"""
+        retry_hint = (
+            "上一版输出无法解析为合法 JSON。"
+            "规则：字符串内的反斜杠必须写成 \\\\；字符串内不要出现未转义的双引号；"
+            "problem 每条不超过 120 个中文字符，少用 LaTeX 命令字面量，改用文字描述（如「section 标题」）。"
+            "请只输出一整段合法 UTF-8 JSON，不要用 Markdown 围栏，不要用「…」截断。"
+        )
+        msgs: list[Any] = list(messages)
+        last_err: BaseException | None = None
+        for attempt in range(3):
+            response = self.llm.invoke(msgs)
+            try:
+                return self._parse_response(response, output_schema)
+            except ValueError as e:
+                last_err = e
+                logging.getLogger(__name__).warning(
+                    "OllamaStructuredLLM JSON parse failed attempt %s/3 role=%s: %s",
+                    attempt + 1,
+                    self.role,
+                    e,
+                )
+                msgs = list(messages) + [HumanMessage(content=retry_hint)]
+        assert last_err is not None
+        raise last_err
 
     def _parse_response(self, content: str, schema: type[T]) -> T:
         """从模型响应中提取 JSON 并解析为 Pydantic 模型。"""
+        stripped = content.strip()
+
         # 尝试直接解析（如果模型返回纯 JSON）
         try:
-            return schema.parse_raw(content)
+            return _pydantic_validate_json(schema, stripped)
         except Exception:
             pass
 
         # 尝试从 markdown 代码块中提取 JSON
-        import re
         json_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)```', content)
         for block in json_blocks:
             try:
-                return schema.parse_raw(block.strip())
+                return _pydantic_validate_json(schema, block.strip())
             except Exception:
                 continue
 
-        # 尝试从文本中提取第一个 JSON 对象
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
+        # 平衡括号截取多个候选（避免贪婪 .* 吞掉无效尾部或匹配错位）
+        for chunk in _iter_json_object_candidates(content):
             try:
-                return schema.parse_raw(json_match.group(0))
-            except Exception as e:
-                raise ValueError(f"Failed to parse JSON from response: {content[:200]}...") from e
+                return _pydantic_validate_json(schema, chunk)
+            except Exception:
+                continue
 
-        raise ValueError(f"No valid JSON found in response: {content[:200]}...")
+        raise ValueError(f"No valid JSON found in response: {content[:500]}...")
 
 
 # LLM 结构化输出容器
@@ -159,7 +244,10 @@ class ScoreOutput(BaseModel):
 # =========================
 # Ollama 原生 Chain 类（放在 Output 类定义后避免前向引用）
 # =========================
-class OllamaReviewerChain:
+from langchain_core.runnables import Runnable
+
+
+class OllamaReviewerChain(Runnable):
     """Ollama 原生的审稿链，返回 ReviewOutput。"""
 
     def __init__(self, llm: OllamaStructuredLLM) -> None:
@@ -169,21 +257,30 @@ class OllamaReviewerChain:
             "你的任务是审查用户提供的 LaTeX 段落，识别其中的语法错误、学术表达不专业、逻辑漏洞或 LaTeX 格式问题。"
             "对于每个发现的问题，请务必给出准确的 problem 描述、severity(low/medium/high) 以及对应的 span(原文片段)。"
             "请保持专业、严谨的态度。最多返回 5 个最重要的问题。"
+            "【JSON 硬性要求】输出必须是单一合法 JSON 对象；problem 每条不超过 120 个中文字符；"
+            "字符串内如需提及反斜杠应写成双反斜杠；不要用 Markdown 代码围栏；不要用省略号截断未闭合的字符串。"
+            "section_id 使用调用方当前段落占位符或与正文一致的节标题即可，不要输出过长的 LaTeX 命令串。"
             "你必须以 JSON 格式返回结果，格式如下：\n"
             '{"issues": [{"section_id": "...", "problem": "...", "severity": "...", "span": "..."}]}'
         )
 
-    def invoke(self, inputs: dict[str, Any]) -> ReviewOutput:
-        title = inputs["title"]
-        content = inputs["content"]
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(content=f"标题: {title}\n\n内容:\n{content}"),
-        ]
+    def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ReviewOutput:
+        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        if hasattr(inputs, "to_messages"):
+            # 如果是 ChatPromptValue，直接使用其消息并添加系统提示
+            messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
+        else:
+            # 如果是字典，按原逻辑处理
+            title = inputs.get("title", "")
+            content = inputs.get("content", "")
+            messages = [
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(content=f"标题: {title}\n\n内容:\n{content}"),
+            ]
         return self.llm.invoke(messages, ReviewOutput)
 
 
-class OllamaEditorChain:
+class OllamaEditorChain(Runnable):
     """Ollama 原生的编辑链，返回 EditorOutput。"""
 
     def __init__(self, llm: OllamaStructuredLLM) -> None:
@@ -196,22 +293,25 @@ class OllamaEditorChain:
             '{"refined_latex": "..."}'
         )
 
-    def invoke(self, inputs: dict[str, Any]) -> EditorOutput:
-        title = inputs.get("title", "")
-        content = inputs["content"]
-        issues = inputs.get("issues", [])
-        issues_text = "\n".join([f"- {i.problem} (严重性: {i.severity})" for i in issues])
-
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(
-                content=f"标题: {title}\n\n当前段落内容:\n{content}\n\n需要修复的问题:\n{issues_text}\n\n请提供优化后的 LaTeX 段落。"
-            ),
-        ]
+    def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> EditorOutput:
+        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        if hasattr(inputs, "to_messages"):
+            messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
+        else:
+            title = inputs.get("title", "")
+            content = inputs.get("content", "")
+            issues = inputs.get("issues", [])
+            issues_text = "\n".join([f"- {i.problem} (严重性: {i.severity})" for i in issues])
+            messages = [
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(
+                    content=f"标题: {title}\n\n当前段落内容:\n{content}\n\n需要修复的问题:\n{issues_text}\n\n请提供优化后的 LaTeX 段落。"
+                ),
+            ]
         return self.llm.invoke(messages, EditorOutput)
 
 
-class OllamaCriticChain:
+class OllamaCriticChain(Runnable):
     """Ollama 原生的评分链，返回 ScoreOutput。"""
 
     def __init__(self, llm: OllamaStructuredLLM) -> None:
@@ -223,13 +323,17 @@ class OllamaCriticChain:
             '{"score": 0.75}'
         )
 
-    def invoke(self, inputs: dict[str, Any]) -> ScoreOutput:
-        before = inputs["before"]
-        after = inputs["after"]
-        messages = [
-            SystemMessage(content=self.system_prompt),
-            HumanMessage(content=f"修改前: {before}\n\n修改后: {after}"),
-        ]
+    def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ScoreOutput:
+        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        if hasattr(inputs, "to_messages"):
+            messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
+        else:
+            before = inputs.get("before", "")
+            after = inputs.get("after", "")
+            messages = [
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(content=f"修改前: {before}\n\n修改后: {after}"),
+            ]
         return self.llm.invoke(messages, ScoreOutput)
 
 
@@ -280,8 +384,8 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         # Ollama 原生 API 模式（支持 think: false 等原生选项）
         if not _OLLAMA_AVAILABLE:
             raise ImportError(
-                "backend='ollama_native' requires langchain_community. "
-                "Install: pip install langchain-community"
+                "backend='ollama_native' requires langchain-ollama. "
+                "Install: pip install langchain-ollama"
             )
         logger.info(
             "Using Ollama native backend (think=false) for models: "

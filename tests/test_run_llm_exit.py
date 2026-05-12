@@ -16,7 +16,7 @@ def test_run_exits_1_when_llm_failures_reported(monkeypatch, tmp_path: Path) -> 
     cfg = tmp_path / "c.yaml"
     cfg.write_text("ollama_healthcheck: false\n", encoding="utf-8")
 
-    def fake_invoke(state: GraphState) -> GraphState:
+    def fake_invoke(state: GraphState, *args: object, **kwargs: object) -> GraphState:
         return GraphState(
             original_tex=state.original_tex,
             llm_failure_count=1,
@@ -54,7 +54,7 @@ def test_run_exits_0_with_allow_llm_failures(monkeypatch, tmp_path: Path) -> Non
     cfg = tmp_path / "c.yaml"
     cfg.write_text("ollama_healthcheck: false\n", encoding="utf-8")
 
-    def fake_invoke(state: GraphState) -> GraphState:
+    def fake_invoke(state: GraphState, *args: object, **kwargs: object) -> GraphState:
         return GraphState(
             original_tex=state.original_tex,
             llm_failure_count=2,

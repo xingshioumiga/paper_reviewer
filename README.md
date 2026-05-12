@@ -1,90 +1,232 @@
-# paper_reviewer
+# paper-reviewer
 
-A lightweight LangGraph-based paper reviewer demo with iterative section editing (LaTeX `\section{...}` blocks), using an **OpenAI-compatible** local API (e.g. **Ollama**).
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**中文说明见 [README_zh.md](README_zh.md).**
+**paper-reviewer** is a small [LangGraph](https://github.com/langchain-ai/langgraph) demo that iteratively reviews and refines **LaTeX** manuscripts **one `\section{...}` block at a time**. Three LLM roles (**Reviewer → Editor → Critic**) propose edits and scores; an **aggregator** accepts changes only when the critic’s score improves the last accepted score for that section, otherwise it **rolls back**.
+
+Chinese documentation: **[README_zh.md](README_zh.md)**.
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [CLI](#cli)
+- [Iteration semantics](#iteration-semantics)
+- [LLM backends](#llm-backends)
+- [Logging and exit codes](#logging-and-exit-codes)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Features
+
+- **Section-aware pipeline**: parses `\section` / `\subsection` hierarchy, processes sections in document order.
+- **Multi-role graph**: Reviewer (issues) → Editor (refined LaTeX) → Critic (0–1 score) → Aggregator (accept / rollback).
+- **Outer iterations**: configurable max full-document passes and per-section “no improvement” limits.
+- **OpenAI-compatible API** by default (e.g. local [Ollama](https://ollama.com/) `/v1`), plus optional **Ollama native** backend for models that need thinking disabled (e.g. Qwen3.5).
+- **Mock graph** (`run_demo.py`) for fast routing and state checks **without** calling an LLM.
+- **CLI + YAML** with clear precedence; file logging; optional Ollama health probe before the run.
+- **Tests** (pytest) and **ruff** for linting.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  init[init] --> reviewer[reviewer]
+  reviewer --> editor[editor]
+  editor --> critic[critic]
+  critic --> aggregator[aggregator]
+  aggregator --> next_section[next_section]
+  next_section -->|more sections| reviewer
+  next_section -->|done pass| iteration_step[iteration_step]
+  iteration_step -->|another round| reviewer
+  iteration_step -->|stop| END([END])
+```
+
+- **`LangGraph_loop_llm.py`**: compiled graph using `*_llm` nodes (production path for `run.py`).
+- **`LangGraph_loop.py`**: same topology with **mock** nodes (used by `run_demo.py` and tests).
+- **`langgraph_state.py`**: Pydantic models for `GraphState`, sections, issues, and history.
+- **`langgraph_nodes.py`**: all node implementations, LLM wiring, and `init_llms_from_config`.
+- **`paper_reviewer_tool.py`**: LaTeX splitting and rendering helpers.
+- **`runtime_config.py`**: default config tree and deep-merge loader for YAML.
+
+---
 
 ## Requirements
 
 - **Python 3.10+**
-- For **`run.py`** (LLM path): Ollama (or compatible server) running locally, models pulled as configured (e.g. `qwen2.5:14b`).
-- **`run_demo.py`**: mock graph only; no LLM calls; good for fast routing/state checks.
+- For **`run.py`**: a running **OpenAI-compatible** server (typically Ollama) and pulled models as configured.
+- For **`run_demo.py`**: no LLM required.
 
-## Quick Start
+---
 
-1. Create and activate a virtual environment (conda or venv).
-2. Install dependencies (pick one):
-   - **Reproducible (recommended):** `python -m pip install -r requirements-lock.txt`
-   - **Loose pins:** `python -m pip install -r requirements.txt`
-3. Run:
-   - **Mock pipeline:** `python run_demo.py`
-   - **LLM pipeline (Ollama):** `python run.py --input sample_manuscript.tex --output output.tex`
+## Installation
 
-Print version: `python run.py --version`
+```bash
+git clone <your-repository-url>
+cd paper_reviewer
+python -m venv .venv
+```
+
+**Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`  
+**macOS / Linux:** `source .venv/bin/activate`
+
+Install dependencies (pick one):
+
+```bash
+# Reproducible pins (recommended)
+python -m pip install -r requirements-lock.txt
+
+# Loose package names only
+python -m pip install -r requirements.txt
+```
+
+If you use **`llm.backend: ollama_native`** in YAML, also install:
+
+```bash
+python -m pip install langchain-ollama
+```
+
+Copy and edit config:
+
+```bash
+copy config\local.example.yaml config\local.yaml   # Windows
+# cp config/local.example.yaml config/local.yaml    # Unix
+```
+
+Do **not** commit real cloud API keys. Use `api_key: ollama` for local Ollama, or put secrets in `config/*.private.yaml` (gitignored).
+
+---
+
+## Quick start
+
+**Mock pipeline (no LLM):**
+
+```bash
+python run_demo.py
+```
+
+**Full LLM pipeline:**
+
+```bash
+python run.py --input sample_manuscript.tex --output output.tex
+```
+
+**Example with overrides:**
+
+```bash
+python run.py --input sample_manuscript.tex --output output.tex --max-iterations 2 --max-no-improve 100
+```
+
+Print version:
+
+```bash
+python run.py --version
+```
+
+---
 
 ## Configuration
 
-- Default config file: **`config/local.yaml`** (override with `--config`).
-- Template with comments: **`config/local.example.yaml`**.
-- For Ollama-only local use, keep `api_key: ollama`. Do not commit real cloud API keys; optional **`config/*.private.yaml`** is gitignored for secrets.
-- If a **system-wide HTTP(S) proxy** breaks local Ollama, set `llm.base_url` to `http://127.0.0.1:11434/v1` or add localhost/127.0.0.1 to proxy bypass.
+Default file: **`config/local.yaml`**. Override path with `--config`.
 
-Common keys:
+| Key | Purpose |
+|-----|--------|
+| `input_path` / `output_path` | Default TeX input / output paths |
+| `max_iterations` | Maximum **outer** full-document passes |
+| `max_no_improve` | Per-section streak cap without beating the best accepted score → section skipped |
+| `log_level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `log_dir` | Directory for timestamped log files |
+| `ollama_healthcheck` | If `true`, `run.py` probes `{host}/api/tags` (disable for non-Ollama hosts) |
+| `llm` | `backend`, `base_url`, `api_key`, optional `request_timeout`, per-role `model` / `temperature` |
 
-- `input_path`, `output_path`, `max_iterations`, `max_no_improve`, `log_level`, `log_dir`
-- `ollama_healthcheck`: when `true`, `run.py` probes `{host from base_url}/api/tags` before the graph; set `false` for non-Ollama OpenAI-compatible hosts
-- `llm`: `base_url`, `api_key`, optional positive `request_timeout` (seconds), and per-role `model` / `temperature` for `reviewer`, `editor`, `critic`
+See **`config/local.example.yaml`** for commented examples (including `ollama_native` vs `openai_compatible`).
 
-**CLI overrides YAML** for: `--input`, `--output`, `--max-iterations`, `--max-no-improve`, `--log-level`.
+**Precedence:** CLI arguments override YAML where supported; YAML overrides built-in defaults in `runtime_config.DEFAULT_CONFIG`.
 
-### LLM failures and exit codes
+---
 
-If any LLM node (reviewer/editor/critic) raises, `llm_failure_count` is incremented. **`run.py` exits with code 1** by default after writing the output TeX, so scripts do not treat a degraded run as success. Inspect `logs/` for `ERROR` lines.
+## CLI
 
-Use **`--allow-llm-failures`** only if you intentionally want exit code 0 despite LLM errors.
+| Argument | Description |
+|----------|-------------|
+| `--input` | Input `.tex` path |
+| `--output` | Output `.tex` path |
+| `--config` | YAML config path (default `config/local.yaml`) |
+| `--max-iterations` | Outer iteration cap |
+| `--max-no-improve` | Per-section no-improve cap |
+| `--log-level` | Logging level |
+| `--allow-llm-failures` | Exit `0` even if LLM calls failed (default: exit `1` when failures occurred) |
+| `--version` | Show version |
 
-## Iteration Semantics
+---
 
-The graph walks every parsed `\section{...}` in document order before the next outer iteration. After each edit, the critic scores the change and the **aggregator** compares to the last **accepted** score for that `section_id`:
+## Iteration semantics
 
-- Higher score → accept and record in `history`.
-- Otherwise → roll the section back to the last accepted content.
-- If a section has no prior accepted score, the baseline is `0.0`.
+1. **Section loop**: For each parsed section, in order: Reviewer → Editor → Critic → Aggregator, then advance to the next section.
+2. **Aggregator**: Compares the new critic score to the **last accepted** score for that `section_id`.
+   - **Higher** → accept, append to `history`, update `best_tex`.
+   - **Otherwise** → rollback that section’s body to the last accepted content.
+   - If there is no prior accepted score, the baseline is `0.0`.
+3. **Per-section skip**: If a section fails to improve for `max_no_improve` consecutive tries, it is skipped for the rest of the run (see `skipped_section_ids` in state).
+4. **Outer stop**: After a full pass, `iteration_step` may start another outer round until `max_iterations` or early-stop rules (e.g. no document-wide improvement) apply.
 
-The run ends with a per-section **accepted** score summary (never accepted → `0.0`). There is **no single global “best score”** across sections, to avoid misleading mixing of incomparable per-section critic values.
+There is **no single global “best score”** across sections in the summary; scores are reported **per section** to avoid mixing incomparable values.
 
-## Logging
+---
 
-Each run logs to the console and to `log_dir` (default `logs/`), files named `run_<timestamp>.log`. If `openai._base_client` keeps logging `Retrying request`, check `llm.request_timeout` in YAML: a small value can abort slow local generations; omit it or set a larger positive value.
+## LLM backends
 
-## One-Click Run in Cursor/VS Code
+| `llm.backend` | When to use |
+|---------------|-------------|
+| `openai_compatible` (default) | Any OpenAI-style `/v1` API: Ollama, vLLM, cloud providers, etc. Uses `langchain-openai` `ChatOpenAI` + structured output. |
+| `ollama_native` | Ollama with native options (e.g. disable thinking for Qwen3.5). Requires `langchain-ollama`. Uses JSON parsing with limited retries for long LaTeX in `refined_latex`. |
 
-The repo includes `.vscode/launch.json` and `.vscode/tasks.json`. If launch names still reference a specific conda env (e.g. `your-env`), adjust the `python` path in those JSON files to match your machine.
+---
 
-Typical tasks: run demo, run tests, ruff, combined quality gate.
+## Logging and exit codes
 
-## Tests and quality gate
+- Logs go to the console and to `log_dir` (default `logs/`), files like `run_<timestamp>.log`.
+- If any LLM node raises, `llm_failure_count` increments. **`run.py` still writes the output TeX** but exits with code **`1`** by default so automation does not treat a degraded run as success. Use `--allow-llm-failures` only when you explicitly want exit code `0`.
+
+Editor JSON parse warnings (e.g. malformed or truncated JSON from the model) are retried up to three times before failing the node.
+
+---
+
+## Development
 
 ```bash
 python -m pytest -q
 python -m ruff check .
 ```
 
-Coverage includes: TeX parser edge cases, routing/stop rules, mock end-to-end graph and CLI, and **`run.py` exit behaviour** when the graph reports LLM failures.
+Beginner-oriented testing notes (Chinese): **`TESTING_GUIDE_ZH.md`**.
+
+**VS Code / Cursor:** `.vscode/launch.json` and `.vscode/tasks.json` include demo, tests, and ruff tasks. Adjust the Python interpreter path to match your environment.
+
+---
 
 ## Troubleshooting
 
-- **`ModuleNotFoundError`**: `pip install -r requirements-lock.txt` (or `requirements.txt`) in the active environment.
-- **LLM errors but TeX written**: default **exit code 1**; see **LLM failures and exit codes** above.
-- **Global proxy and 502 on localhost**: use `127.0.0.1` in `llm.base_url` or bypass proxy for local addresses.
-- **No output file**: verify `--input` exists and paths are correct.
-- **Truncated output in terminal**: open the output `.tex` file; the terminal only prints a preview.
-- **Deeper diagnostics**: `--log-level DEBUG` and the latest file under `logs/`.
+| Symptom | What to try |
+|---------|-------------|
+| `ModuleNotFoundError` | Install from `requirements-lock.txt` or `requirements.txt`; add `langchain-ollama` for `ollama_native`. |
+| `502` or connection errors to `localhost` | Use `http://127.0.0.1:11434/v1` in `llm.base_url` or bypass proxy for local addresses. |
+| Frequent `Retrying request` / timeouts | Set a larger positive `llm.request_timeout` in YAML, or remove it if too aggressive. |
+| Truncated TeX in terminal | Open the output file; the CLI only prints a preview. |
+| JSON parse warnings on Editor | Long sections: increase model context / `num_predict`, simplify prompts, or use a model that follows JSON more reliably. |
 
-## Beginner guide (Chinese)
-
-See **`TESTING_GUIDE_ZH.md`** for a beginner-oriented testing walkthrough.
+---
 
 ## Version
 
-`python run.py --version` matches `_version.py` and `pyproject.toml` `[project].version`; bump all together when cutting a release.
+`python run.py --version` should match `_version.py` and `pyproject.toml` `[project].version`; bump them together when releasing.
