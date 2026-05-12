@@ -45,7 +45,9 @@ class GraphState(BaseModel):
     original_tex: str
     # proofread | rewrite — selects system prompts for this run only (see prompt_modes).
     edit_mode: str = "proofread"
-    current_tex: str = ""
+    # TeX before the first ``\\section`` (preamble, title, abstract, ...); not edited by the graph.
+    document_prefix: str = ""
+    current_tex: str = ""  # Latest ``render_sections`` body only (no ``document_prefix``).
     run_started_at: float = 0.0
 
     sections: list[Section] = Field(default_factory=list)
@@ -55,7 +57,7 @@ class GraphState(BaseModel):
     history: list[HistoryItem] = Field(default_factory=list)
 
     current_score: float = 0.0  # 本轮 critic 对「最后一次改写」的打分 / Latest critic score for last edit
-    best_tex: str = ""  # 最近一次「采纳」后的全文 LaTeX 快照 / Full-doc snapshot after last accept
+    best_tex: str = ""  # 最近一次采纳后的 section-body 快照；写盘时与 document_prefix 拼接 / Body-only snapshot
 
     iteration: int = 0  # 已完成的外层轮次数（iteration_step 末尾递增）/ Finished outer rounds
     max_iterations: int = 3  # 外层循环上限 / Cap on outer iterations

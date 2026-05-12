@@ -93,12 +93,14 @@ def _find_section_commands(tex: str) -> list[tuple[int, int]]:
     return commands
 
 
-def split_into_sections(tex: str) -> list[Section]:
-    """将全文按 \\section 切成 Section 列表；每段正文直到下一节前。
-    Split full TeX into sections; body runs until the next section command."""
+def split_prefix_and_sections(tex: str) -> tuple[str, list[Section]]:
+    """Split ``(prefix, sections)``: prefix is text before the first ``\\section``; sections as usual.
+    If there is no ``\\section``, returns ``(tex, [])``."""
     commands = _find_section_commands(tex)
-    sections = []
-
+    if not commands:
+        return tex, []
+    prefix = tex[: commands[0][0]]
+    sections: list[Section] = []
     for sec_idx, (start, end) in enumerate(commands):
         next_start = commands[sec_idx + 1][0] if sec_idx + 1 < len(commands) else len(tex)
         sections.append(
@@ -108,8 +110,62 @@ def split_into_sections(tex: str) -> list[Section]:
                 content=tex[end:next_start].strip(),
             )
         )
+    return prefix, sections
 
+
+def split_into_sections(tex: str) -> list[Section]:
+    """将全文按 \\section 切成 Section 列表；每段正文直到下一节前。
+    Split full TeX into sections; body runs until the next section command."""
+    _, sections = split_prefix_and_sections(tex)
     return sections
+
+
+# After ``\\section`` titles, ``\n`` two-char sequences are usually JSON artifacts, not ``\\neq`` etc.
+_PROTECTED_AFTER_BACKSLASH_N = (
+    "abla",
+    "eq",
+    "eg",
+    "u",
+    "ot",
+    "ewline",
+    "ewpage",
+    "ewcommand",
+    "ewenvironment",
+    "ewtheorem",
+    "oindent",
+    "ocite",
+    "olimits",
+    "onumber",
+    "oalign",
+    "obreak",
+    "ormalsize",
+    "otag",
+    "otin",
+    "parallel",
+    "oexpand",
+    "ouppercase",
+    "olowercase",
+)
+
+
+def normalize_fake_newlines_in_latex(s: str) -> str:
+    r"""Turn spurious two-char ``\``+``n`` (model JSON leakage) into real newlines without eating ``\neq``, ``\nabla``, …"""
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if i + 1 < n and s[i] == "\\" and s[i + 1] == "n":
+            tail = s[i + 2 : i + 2 + 32]
+            if any(tail.startswith(p) for p in _PROTECTED_AFTER_BACKSLASH_N):
+                out.append("\\n")
+                i += 2
+                continue
+            out.append("\n")
+            i += 2
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
 
 
 def strip_leading_section_command(content: str) -> str:
@@ -139,3 +195,16 @@ def render_sections(sections: list[Section]) -> str:
         f"{section.title}\n{strip_leading_section_command(section.content)}"
         for section in sections
     )
+
+
+def assemble_output_tex(
+    document_prefix: str,
+    best_tex: str,
+    current_tex: str,
+    sections: list[Section],
+) -> str:
+    """Full document for writing: prefix + rendered section bodies (``best_tex`` / ``current_tex``)."""
+    body = best_tex or current_tex
+    if not body and sections:
+        body = render_sections(sections)
+    return document_prefix + body

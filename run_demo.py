@@ -11,6 +11,7 @@ from pathlib import Path
 from LangGraph_loop import graph
 from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
+from paper_reviewer_tool import assemble_output_tex
 from prompt_modes import normalize_edit_mode
 from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
@@ -99,7 +100,12 @@ def main() -> None:
         print(f"  {sid}: {sc:.4f}")
     print()
     output_file = Path(output_path)
-    output_tex = final_state.best_tex if final_state.best_tex else final_state.current_tex
+    output_tex = assemble_output_tex(
+        final_state.document_prefix,
+        final_state.best_tex,
+        final_state.current_tex,
+        final_state.sections,
+    )
     output_file.write_text(output_tex, encoding="utf-8")
     logger.info(
         "run complete: iterations=%s history_items=%s elapsed=%.2fs output_file=%s",

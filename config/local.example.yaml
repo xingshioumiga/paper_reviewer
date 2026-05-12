@@ -8,6 +8,10 @@ output_path: output.tex
 # proofread = minimal edits (default) | rewrite = broader developmental polish. CLI --mode overrides.
 mode: proofread
 
+# If true and mode is rewrite, run.py runs a second pass in proofread (use --post-proofread to enable from CLI).
+post_proofread_after_rewrite: false
+post_proofread_max_iterations: 1
+
 # Optional: override built-in system strings per mode and role (reviewer | editor | critic).
 # modes:
 #   rewrite:

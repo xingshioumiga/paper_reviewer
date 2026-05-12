@@ -13,7 +13,12 @@ import time
 from typing import Any, List, Optional, Type, TypeVar
 
 from langgraph_state import GraphState, HistoryItem, Issue
-from paper_reviewer_tool import render_sections, split_into_sections, strip_leading_section_command
+from paper_reviewer_tool import (
+    normalize_fake_newlines_in_latex,
+    render_sections,
+    split_prefix_and_sections,
+    strip_leading_section_command,
+)
 # from langchain_core.output_parsers import StrOutputParser
 
 from langchain_openai import ChatOpenAI
@@ -547,12 +552,13 @@ def section_score_summary(state: GraphState) -> list[tuple[str, float]]:
 # --- 1 init: parse sections, reset counters and timer ---
 def init_node(state: GraphState) -> GraphState:
     state.run_started_at = time.monotonic()
-    sections = split_into_sections(state.original_tex)
-
+    prefix, sections = split_prefix_and_sections(state.original_tex)
+    state.document_prefix = prefix
     state.sections = sections
-    state.current_tex = state.original_tex
+    body0 = render_sections(sections) if sections else ""
+    state.current_tex = body0
+    state.best_tex = body0
 
-    state.best_tex = state.original_tex
     state.iteration = 0
     state.current_section_index = 0
     state.section_no_improve_rounds = {section.id: 0 for section in sections}
@@ -755,6 +761,7 @@ def editor_node_llm(state: GraphState):
         refined_content = refined_content.refined_latex.strip()
         refined_content = refined_content.replace("```latex", "").replace("```", "").strip()
         refined_content = strip_leading_section_command(refined_content)
+        refined_content = normalize_fake_newlines_in_latex(refined_content)
 
         # 更新 state
         old_content = section.content

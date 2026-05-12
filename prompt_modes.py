@@ -47,6 +47,8 @@ def builtin_prompts() -> dict[str, dict[str, str]]:
                 "6. 严禁输出 Markdown、解释说明或额外文本。\n\n"
                 "【问题格式说明】\n"
                 "- [severity] problem | span: 原文片段\n"
+                "【JSON 与换行】JSON 里若需换行请用标准 JSON 转义；解析后 refined_latex 中应为真实换行符，"
+                "禁止在正文里留下字面量「反斜杠 + 字母 n」两个字符当作换行。\n"
                 "你必须以 JSON 格式返回结果，格式如下：\n"
                 '{"refined_latex": "..."}'
             ),
@@ -76,6 +78,8 @@ def builtin_prompts() -> dict[str, dict[str, str]]:
                 "不得破坏数学环境（如 $...$、equation 等）与关键 LaTeX 命令结构；不得引入与原文矛盾的新论点。\n"
                 "输出必须是完整、可编译的该段 LaTeX 正文（仅该节 body，不要重复 \\section 行若上游已剥离）。\n"
                 "严禁 Markdown、开场白或解释文字。\n"
+                "【JSON 与换行】JSON 里若需换行请用标准 JSON 转义；解析后 refined_latex 中应为真实换行符，"
+                "禁止在正文里留下字面量「反斜杠 + 字母 n」两个字符当作换行。\n"
                 "你必须以 JSON 格式返回结果，格式如下：\n"
                 '{"refined_latex": "..."}'
             ),

@@ -32,7 +32,9 @@ Chinese documentation: **[README_zh.md](README_zh.md)**.
 - **Multi-role graph**: Reviewer (issues) → Editor (refined LaTeX) → Critic (0–1 score) → Aggregator (accept / rollback).
 - **Outer iterations**: configurable max full-document passes and per-section “no improvement” limits.
 - **OpenAI-compatible API** by default (e.g. local [Ollama](https://ollama.com/) `/v1`), plus optional **Ollama native** backend for models that need thinking disabled (e.g. Qwen3.5).
-- **Edit modes**: `proofread` (minimal, span-focused edits) vs `rewrite` (developmental polish: clearer structure and flow while preserving science and LaTeX integrity). Selected per run via `--mode` or YAML `mode`; optional per-role prompt overrides under `modes`.
+- **Document prefix**: text before the first `\section` (preamble, title, abstract) is stored in `GraphState.document_prefix` and prepended when writing output; section bodies remain graph-internal.
+- **Literal `\n` cleanup**: after each editor JSON parse, a conservative pass converts spurious two-character `\`+`n` sequences into real newlines without eating `\neq`, `\nabla`, `\newcommand`, etc.
+- **Optional chained pass**: `--post-proofread` (or YAML `post_proofread_after_rewrite`) runs a second graph in `proofread` mode after `rewrite` (extra LLM cost; `post_proofread_max_iterations` caps the second pass).
 - **CLI + YAML** with clear precedence; file logging; optional Ollama health probe before the run.
 - **Tests** (pytest) and **ruff** for linting.
 
@@ -57,7 +59,7 @@ flowchart LR
 - **`LangGraph_loop.py`**: same topology with **mock** nodes (used by `run_demo.py` and tests).
 - **`langgraph_state.py`**: Pydantic models for `GraphState`, sections, issues, and history.
 - **`langgraph_nodes.py`**: all node implementations, LLM wiring, and `init_llms_from_config`.
-- **`paper_reviewer_tool.py`**: LaTeX splitting and rendering helpers.
+- **`paper_reviewer_tool.py`**: LaTeX splitting (`split_prefix_and_sections`), `render_sections`, `assemble_output_tex`, and `normalize_fake_newlines_in_latex`.
 - **`prompt_modes.py`**: built-in system prompts per mode/role and merge with optional YAML `modes` overrides.
 
 ---
@@ -128,7 +130,7 @@ python run.py --input sample_manuscript.tex --output output.tex
 python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
 
-**Two-phase workflow (separate runs, separate logs):** run once with `--mode rewrite`, then after human edits run again with `--mode proofread` using the previous `.tex` as `--input`. Each invocation has its own in-memory `history` and log file.
+**Two-phase workflow (separate runs, separate logs):** run once with `--mode rewrite`, then after human edits run again with `--mode proofread` using the previous `.tex` as `--input`. Each invocation has its own in-memory `history` and log file. **Alternatively**, a single `run.py` can chain with `--mode rewrite --post-proofread` (second pass in-process, still a fresh `GraphState` for the proofread leg).
 
 Print version:
 
@@ -147,6 +149,8 @@ Default file: **`config/local.yaml`**. Override path with `--config`.
 | `input_path` / `output_path` | Default TeX input / output paths |
 | `mode` | `proofread` (default) or `rewrite`; selects reviewer/editor/critic system prompts for this run |
 | `modes` | Optional map: `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` strings override built-in prompts |
+| `post_proofread_after_rewrite` | If `true` and `mode` is `rewrite`, `run.py` runs a second pass in `proofread` (also enable with CLI `--post-proofread`) |
+| `post_proofread_max_iterations` | Outer iteration cap for the optional second `proofread` pass (default `1`) |
 | `max_iterations` | Maximum **outer** full-document passes |
 | `max_no_improve` | Per-section streak cap without beating the best accepted score → section skipped |
 | `log_level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
@@ -171,6 +175,7 @@ See **`config/local.example.yaml`** for commented examples (including `ollama_na
 | `--max-no-improve` | Per-section no-improve cap |
 | `--log-level` | Logging level |
 | `--mode` | `proofread` or `rewrite`; overrides YAML `mode` |
+| `--post-proofread` | After `rewrite`, run an automatic second pass in `proofread` (sets `post_proofread_after_rewrite` for this run) |
 | `--allow-llm-failures` | Exit `0` even if LLM calls failed (default: exit `1` when failures occurred) |
 | `--version` | Show version |
 

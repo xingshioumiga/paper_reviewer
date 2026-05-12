@@ -32,7 +32,9 @@
 - **多节点工作流**：审稿（问题列表）→ 改写（结构化 LaTeX）→ 打分（0–1）→ 聚合（采纳 / 回滚）。
 - **外层迭代**：可配置整稿最多跑几轮、单节连续无提升上限。
 - **默认 OpenAI 兼容接口**（如本机 [Ollama](https://ollama.com/) `/v1`）；可选 **Ollama 原生**后端，便于关闭 thinking 等（如 Qwen3.5）。
-- **编辑模式**：`proofread`（最小必要修改、按 span 订正）与 `rewrite`（发展性润色：句式与衔接、术语统一等，仍禁止编造数据或破坏 LaTeX/引用）。通过 `--mode` 或 YAML `mode` 每次运行选一种；可在 `modes` 下按角色覆盖内置 system 文案。
+- **文档前缀**：第一个 `\section` 之前的全文（导言区、标题、摘要等）保存在 `GraphState.document_prefix`，写盘时拼在润色后的各节正文之前；图内仍只编辑各节 body。
+- **字面量 `\n` 清理**：Editor 解析 JSON 后做保守替换，将误写入的「反斜杠 + n」转为真实换行，并避开 `\neq`、`\nabla`、`\newcommand` 等合法命令前缀。
+- **可选衔接订正**：`--post-proofread` 或 YAML `post_proofread_after_rewrite`：在 `rewrite` 跑完后**再**启动一轮 `proofread` 图（额外 LLM 开销；轮次由 `post_proofread_max_iterations` 控制）。
 - **YAML + CLI**、文件日志、可选 Ollama 启动前健康检查；**pytest** 与 **ruff** 纳入工作流。
 
 ---
@@ -58,7 +60,7 @@ flowchart LR
 | `LangGraph_loop.py` | 同拓扑的 Mock 节点图（`run_demo.py`、测试） |
 | `langgraph_state.py` | `GraphState`、段落、问题、历史等 Pydantic 模型 |
 | `langgraph_nodes.py` | 各节点实现、`init_llms_from_config` |
-| `paper_reviewer_tool.py` | TeX 切分与回写渲染 |
+| `paper_reviewer_tool.py` | 切分（含前缀）、`render_sections`、`assemble_output_tex`、字面量换行规范化 |
 | `prompt_modes.py` | 各模式内置 system 文案及 YAML `modes` 合并 |
 
 ---
@@ -129,7 +131,7 @@ python run.py --input sample_manuscript.tex --output output.tex
 python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
 
-**两阶段工作流（两次独立进程、两份独立日志）：** 第一次用 `--mode rewrite` 得到一版 `.tex`，经导师或合作者人工修改后，第二次将上一版作为 `--input`，并用 `--mode proofread` 做终稿式订正。每次运行的 `history` 仅在当次内存中，不会跨 run 混淆。
+**两阶段工作流（两次独立进程、两份独立日志）：** 第一次用 `--mode rewrite` 得到一版 `.tex`，经导师或合作者人工修改后，第二次将上一版作为 `--input`，并用 `--mode proofread` 做终稿式订正。每次运行的 `history` 仅在当次内存中，不会跨 run 混淆。**也可**单次使用 `python run.py --mode rewrite --post-proofread ...` 在同一命令内衔接第二轮订正（仍有独立第二次 `GraphState`）。
 
 查看版本：
 
@@ -148,6 +150,8 @@ python run.py --version
 | `input_path` / `output_path` | 默认输入 / 输出 TeX 路径 |
 | `mode` | `proofread`（默认）或 `rewrite`；决定本 run 三角色 system 提示词 |
 | `modes` | 可选：在 `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` 覆盖对应内置文案 |
+| `post_proofread_after_rewrite` | 为 `true` 且 `mode` 为 `rewrite` 时，`run.py` 再跑一轮 `proofread`（也可用命令行 `--post-proofread`） |
+| `post_proofread_max_iterations` | 第二轮订正的外层迭代上限（默认 `1`） |
 | `max_iterations` | 外层「整稿轮次」上限 |
 | `max_no_improve` | 单节连续未超过历史已采纳分时，达到该次数后跳过该节 |
 | `log_level` | 日志级别 |
@@ -172,6 +176,7 @@ python run.py --version
 | `--max-no-improve` | 单节无提升次数上限 |
 | `--log-level` | 日志级别 |
 | `--mode` | `proofread` 或 `rewrite`，覆盖 YAML 中的 `mode` |
+| `--post-proofread` | `rewrite` 完成后自动再跑一轮 `proofread`（本进程内第二次 `invoke`） |
 | `--allow-llm-failures` | LLM 出错时仍返回退出码 0（默认：有错则退出码 1） |
 | `--version` | 打印版本 |
 

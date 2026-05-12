@@ -28,6 +28,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "log_dir": "logs",
     # run.py 启动时是否请求 Ollama /api/tags；使用非 Ollama 的 OpenAI 兼容端点时改为 false。
     "ollama_healthcheck": True,
+    # If true and mode is rewrite, run.py runs a second graph pass in proofread mode (extra LLM cost).
+    "post_proofread_after_rewrite": False,
+    "post_proofread_max_iterations": 1,
     "llm": {
         "base_url": "http://localhost:11434/v1",
         "api_key": "ollama",

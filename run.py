@@ -3,7 +3,10 @@
 LLM pipeline entry: merge config, init clients, run graph, write output and section score summary.
 """
 
+from __future__ import annotations
+
 import argparse
+import copy
 import logging
 import sys
 import time
@@ -13,6 +16,7 @@ from _version import __version__
 from langgraph_nodes import init_llms_from_config, section_score_summary
 from langgraph_state import GraphState
 from prompt_modes import normalize_edit_mode
+from paper_reviewer_tool import assemble_output_tex
 from runtime_config import load_merged_config
 from utils.logging_setup import setup_logging
 from utils.ollama_health import check_ollama_tags
@@ -54,6 +58,15 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--post-proofread",
+        action="store_true",
+        help=(
+            "After a rewrite pass, run a second graph pass in proofread mode "
+            "(doubles LLM usage; see post_proofread_max_iterations in config)."
+        ),
+    )
+
+    parser.add_argument(
         "--allow-llm-failures",
         action="store_true",
         help=(
@@ -71,6 +84,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _state_from_graph_result(result: GraphState | dict) -> GraphState:
+    if isinstance(result, dict):
+        return GraphState(**result)
+    return result
+
+
 # =========================
 # 主函数
 # =========================
@@ -85,6 +104,10 @@ def main() -> None:
         config["mode"] = args.mode_override
     else:
         config["mode"] = normalize_edit_mode(config.get("mode"))
+    if args.post_proofread:
+        config["post_proofread_after_rewrite"] = True
+
+    primary_mode = str(config["mode"])
 
     # 先配置日志，再初始化 LLM / 跑图，否则 httpx 等库在首次请求完成前可能没有任何文件记录。
     log_level = args.log_level or config.get("log_level", "INFO")
@@ -119,13 +142,15 @@ def main() -> None:
         original_tex=original_tex,
         max_iterations=max_iterations,
         max_no_improve=max_no_improve,
-        edit_mode=str(config["mode"]),
+        edit_mode=primary_mode,
     )
 
     logger.info(
-        "run start (LLM) v%s: mode=%s input=%s output=%s max_iterations=%s max_no_improve=%s log=%s",
+        "run start (LLM) v%s: mode=%s post_proofread=%s input=%s output=%s "
+        "max_iterations=%s max_no_improve=%s log=%s",
         __version__,
-        config["mode"],
+        primary_mode,
+        bool(config.get("post_proofread_after_rewrite")),
         input_file,
         output_path,
         max_iterations,
@@ -136,14 +161,36 @@ def main() -> None:
     # =========================
     # 执行 LangGraph（LLM）
     # =========================
-    # 计算 recursion_limit: 8 段 x 每段约 5 步 + 余量 = 100
-    result = graph.invoke(initial_state, {"recursion_limit": 100})
+    recursion_limit = 100
+    result = graph.invoke(initial_state, {"recursion_limit": recursion_limit})
+    final_state = _state_from_graph_result(result)
+    total_failures = final_state.llm_failure_count
 
-    # ===== 兼容 dict / model =====
-    if isinstance(result, dict):
-        final_state = GraphState(**result)
-    else:
-        final_state = result
+    do_second = bool(config.get("post_proofread_after_rewrite")) and primary_mode == "rewrite"
+    if do_second:
+        assembled = assemble_output_tex(
+            final_state.document_prefix,
+            final_state.best_tex,
+            final_state.current_tex,
+            final_state.sections,
+        )
+        logger.info(
+            "post-proofread: starting second pass (proofread), max_iterations=%s",
+            int(config.get("post_proofread_max_iterations", 1)),
+        )
+        config2 = copy.deepcopy(config)
+        config2["mode"] = "proofread"
+        config2["post_proofread_after_rewrite"] = False
+        init_llms_from_config(config2)
+        state2 = GraphState(
+            original_tex=assembled,
+            max_iterations=int(config.get("post_proofread_max_iterations", 1)),
+            max_no_improve=max_no_improve,
+            edit_mode="proofread",
+        )
+        result2 = graph.invoke(state2, {"recursion_limit": recursion_limit})
+        final_state = _state_from_graph_result(result2)
+        total_failures += final_state.llm_failure_count
 
     # =========================
     # 📊 输出统计
@@ -163,20 +210,22 @@ def main() -> None:
     # =========================
     output_file = Path(output_path)
 
-    output_tex = (
-        final_state.best_tex
-        if final_state.best_tex
-        else final_state.current_tex
+    output_tex = assemble_output_tex(
+        final_state.document_prefix,
+        final_state.best_tex,
+        final_state.current_tex,
+        final_state.sections,
     )
 
     output_file.write_text(output_tex, encoding="utf-8")
 
     logger.info(
-        "run complete: iterations=%s history=%s elapsed=%.2fs output=%s",
+        "run complete: iterations=%s history=%s elapsed=%.2fs output=%s llm_failures=%s",
         final_state.iteration,
         len(final_state.history),
         time.perf_counter() - started_at,
         output_file.resolve(),
+        total_failures,
     )
 
     print(f"Saved output to: {output_file.resolve()}")
@@ -191,10 +240,9 @@ def main() -> None:
         section_scores,
     )
 
-    failures = final_state.llm_failure_count
-    if failures > 0:
+    if total_failures > 0:
         msg = (
-            f"DEGRADED: {failures} LLM call(s) failed during this run; "
+            f"DEGRADED: {total_failures} LLM call(s) failed during this run; "
             "output may be incomplete or unscored. See log for ERROR lines."
         )
         logger.error(msg)
