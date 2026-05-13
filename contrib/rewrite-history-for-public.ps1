@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   运行前请备份仓库。重写后需 ``git push --force-with-lease``；他人需重新克隆。
-  ``git-filter-repo`` 会删除 ``origin`` 远程；本脚本在末尾尝试按 ``$OriginUrl`` 加回。
+  ``git-filter-repo`` 会删除 ``origin`` 远程；若传入 ``-OriginUrl``，脚本会尝试重新 ``git remote add origin``。
 
   若历史上还有**其它**需从 blob 中抹掉的字面量（例如本机 Python 绝对路径），请在本机新建一个
   文本文件（不要提交到 Git），每行格式见 ``py -m git_filter_repo --help`` 中的 ``--replace-text``，
@@ -14,15 +14,13 @@
   依赖：``py -m pip install git-filter-repo``，且 ``py -m git_filter_repo --version`` 可用。
 
 .EXAMPLE
-  .\contrib\rewrite-history-for-public.ps1
-
-.EXAMPLE
-  .\contrib\rewrite-history-for-public.ps1 -ReplaceTextFile "$env:USERPROFILE\gfr-replacements.txt"
+  cd path\to\paper_reviewer
+  .\contrib\rewrite-history-for-public.ps1 -OriginUrl "https://github.com/YOUR_USER/YOUR_REPO.git"
 #>
 
 param(
   [string] $ReplaceTextFile = "",
-  [string] $OriginUrl = "https://github.com/YOUR_GITHUB_USER/YOUR_REPO.git"
+  [string] $OriginUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,13 +56,17 @@ Read-Host | Out-Null
 py -m git_filter_repo @gfrArgs
 
 if (-not (git remote 2>$null | Select-String -Pattern "^origin\s")) {
-  git remote add origin $OriginUrl
-  Write-Host "Re-added remote: origin -> $OriginUrl" -ForegroundColor Green
+  if ([string]::IsNullOrWhiteSpace($OriginUrl)) {
+    Write-Host "No 'origin' remote. Add yours with: git remote add origin https://github.com/<USER>/<REPO>.git" -ForegroundColor Yellow
+  }
+  else {
+    git remote add origin $OriginUrl
+    Write-Host "Re-added remote: origin -> $OriginUrl" -ForegroundColor Green
+  }
 }
 
-Write-Host @"
-
+Write-Host @'
 Done. Next:
-1. Verify there are no leftover secrets:  git grep -i "" OR use GitHub secret scanning
-2. Push:  git push --force-with-lease origin main
-"@ -ForegroundColor Green
+1. Scan for secrets:  git grep -i "sk-" $(git rev-list --all)
+2. Push rewritten history:  git push --force-with-lease origin main
+'@ -ForegroundColor Green
