@@ -2,7 +2,7 @@ from langgraph_state import Section
 from paper_reviewer_tool import render_sections, split_into_sections
 
 
-# 这些测试确保 LaTeX section 解析不会被嵌套 label 或注释干扰。
+# 校验 LaTeX section 解析不受嵌套 label 与注释干扰 / section parsing ignores nested labels and comments.
 def test_split_into_sections_parses_three_sections():
     tex = (
         "\\section{Intro}\nFirst part.\n"

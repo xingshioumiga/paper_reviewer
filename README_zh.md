@@ -2,74 +2,26 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**paper-reviewer** 是一个基于 [LangGraph](https://github.com/langchain-ai/langgraph) 的示例项目：按 LaTeX 中的 **`\section{...}`（及子节）** 将手稿切块，通过 **Reviewer → Editor → Critic** 三个 LLM 角色迭代审稿与润色，再由 **Aggregator** 根据 Critic 打分决定 **采纳或回滚** 到该段上次已采纳版本。
+**paper-reviewer** 用于按 LaTeX 中的 **`\section` / `\subsection`** 逐节润色稿件：审稿模型列出问题，编辑模型给出修改后的 LaTeX，评分模型打分，工具仅在**分数优于该节上一次采纳结果**时**采纳**修改，否则对该节**回滚**。
 
-英文文档：**[README.md](README.md)**。
-
----
-
-## 目录
-
-- [功能概览](#功能概览)
-- [架构说明](#架构说明)
-- [环境要求](#环境要求)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [配置说明](#配置说明)
-- [命令行参数](#命令行参数)
-- [编辑模式（订正 / 重写）](#编辑模式订正--重写)
-- [迭代与打分语义](#迭代与打分语义)
-- [LLM 后端](#llm-后端)
-- [日志与退出码](#日志与退出码)
-- [开发与测试](#开发与测试)
-- [常见问题](#常见问题)
+英文说明：**[README.md](README.md)**（与本文结构、命令示例一致）。
 
 ---
 
-## 功能概览
+## 能帮你做什么
 
-- **按节解析**：识别 `\section` / `\subsection` 层次，按文档顺序逐节处理。
-- **多节点工作流**：审稿（问题列表）→ 改写（结构化 LaTeX）→ 打分（0–1）→ 聚合（采纳 / 回滚）。
-- **外层迭代**：可配置整稿最多跑几轮、单节连续无提升上限。
-- **默认 OpenAI 兼容接口**（如本机 [Ollama](https://ollama.com/) `/v1`）；可选 **Ollama 原生**后端，便于关闭 thinking 等（如 Qwen3.5）。
-- **文档前缀**：第一个 `\section` 之前的全文（导言区、标题、摘要等）保存在 `GraphState.document_prefix`，写盘时拼在润色后的各节正文之前；图内仍只编辑各节 body。
-- **字面量 `\n` 清理**：Editor 解析 JSON 后做保守替换，将误写入的「反斜杠 + n」转为真实换行，并避开 `\neq`、`\nabla`、`\newcommand` 等合法命令前缀。
-- **可选衔接订正**：`--post-proofread` 或 YAML `post_proofread_after_rewrite`：在 `rewrite` 跑完后**再**启动一轮 `proofread` 图（额外 LLM 开销；轮次由 `post_proofread_max_iterations` 控制）。
-- **YAML + CLI**、文件日志、可选 Ollama 启动前健康检查；**pytest** 与 **ruff** 纳入工作流。
+- 在本地对接 **Ollama** 或任意 **OpenAI 兼容**接口（自建或云端）。
+- 选择 **轻度订正**（`proofread`）或 **幅度更大的重写式润色**（`rewrite`）。
+- 可选：在 **`rewrite` 之后自动再接一轮 `proofread`**（同一条命令，模型耗时更多）。
+- 得到新的 **`.tex` 文件**，并在 **`logs/`** 下生成**带时间戳的日志**。
 
 ---
 
-## 架构说明
-
-```mermaid
-flowchart LR
-  init[init] --> reviewer[reviewer]
-  reviewer --> editor[editor]
-  editor --> critic[critic]
-  critic --> aggregator[aggregator]
-  aggregator --> next_section[next_section]
-  next_section -->|还有段落| reviewer
-  next_section -->|本轮结束| iteration_step[iteration_step]
-  iteration_step -->|继续外层轮次| reviewer
-  iteration_step -->|结束| END([END])
-```
-
-| 模块 | 作用 |
-|------|------|
-| `LangGraph_loop_llm.py` | 编译 LLM 版图（`run.py` 使用） |
-| `LangGraph_loop.py` | 同拓扑的 Mock 节点图（`run_demo.py`、测试） |
-| `langgraph_state.py` | `GraphState`、段落、问题、历史等 Pydantic 模型 |
-| `langgraph_nodes.py` | 各节点实现、`init_llms_from_config` |
-| `paper_reviewer_tool.py` | 切分（含前缀）、`render_sections`、`assemble_output_tex`、字面量换行规范化 |
-| `prompt_modes.py` | 各模式内置 system 文案及 YAML `modes` 合并 |
-
----
-
-## 环境要求
+## 使用前准备
 
 - **Python 3.10+**
-- 运行 **`run.py`**：需可用的 **OpenAI 兼容**服务（通常为 Ollama），并已拉取配置中的模型。
-- 运行 **`run_demo.py`**：无需 LLM。
+- 运行 **`run.py`**：可用的 **OpenAI 兼容**服务（常见为本机 Ollama，`http://127.0.0.1:11434/v1`），以及配置里写的模型。
+- 运行 **`run_demo.py`**：无需大模型（Mock 流程）。
 
 ---
 
@@ -84,56 +36,56 @@ python -m venv .venv
 **Windows（PowerShell）：** `.\.venv\Scripts\Activate.ps1`  
 **macOS / Linux：** `source .venv/bin/activate`
 
-安装依赖（二选一）：
-
 ```bash
-# 推荐：锁定版本
 python -m pip install -r requirements-lock.txt
-
-# 或仅包名
-python -m pip install -r requirements.txt
 ```
 
-若配置中使用 **`llm.backend: ollama_native`**，需额外安装：
+（也可：`python -m pip install -r requirements.txt`。）
+
+若在 YAML 中设置 **`llm.backend: ollama_native`**，还需：
 
 ```bash
 python -m pip install langchain-ollama
 ```
 
-复制配置模板：
+---
 
-```bash
-copy config\local.example.yaml config\local.yaml   # Windows
-# cp config/local.example.yaml config/local.yaml   # Unix
-```
+## 首次配置
 
-**不要**将云端真实 API Key 提交到仓库；本机 Ollama 可使用 `api_key: ollama`。敏感项可放在 **`config/*.private.yaml`**（已在 `.gitignore` 中忽略）。
+1. 复制示例配置为本地文件（若含密钥请勿提交）：
+
+   ```bash
+   copy config\local.example.yaml config\local.yaml   # Windows
+   # cp config/local.example.yaml config/local.yaml   # macOS / Linux
+   ```
+
+2. 编辑 **`config/local.yaml`**。本机 Ollama 常用 `api_key: ollama`；云端 Key **不要**提交进仓库，可使用 **`config/*.private.yaml`**（见 `.gitignore`）。
+
+3. 默认输入/输出由 `input_path`、`output_path` 指定。仓库自带示例稿 **`sample_manuscript.tex`**；撰写真实论文时请把 `input_path` 指到自己的 `.tex`。
 
 ---
 
-## 快速开始
+## 用示例稿跑一遍
 
-**Mock（无 LLM）：**
-
-```bash
-python run_demo.py
-```
-
-**完整 LLM 流水线：**
+**完整流水线（会调用你配置的模型）：**
 
 ```bash
 python run.py --input sample_manuscript.tex --output output.tex
 ```
 
-**发展性润色（重写模式）：**
+**偏重写的润色：**
 
 ```bash
 python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
 
-**两阶段工作流（两次独立进程、两份独立日志）：** 第一次用 `--mode rewrite` 得到一版 `.tex`，经导师或合作者人工修改后，第二次将上一版作为 `--input`，并用 `--mode proofread` 做终稿式订正。每次运行的 `history` 仅在当次内存中，不会跨 run 混淆。**也可**单次使用 `python run.py --mode rewrite --post-proofread ...` 在同一命令内衔接第二轮订正（仍有独立第二次 `GraphState`）。
+**不接大模型，体验流程（Mock）：**
 
-查看版本：
+```bash
+python run_demo.py
+```
+
+**查看版本：**
 
 ```bash
 python run.py --version
@@ -141,102 +93,82 @@ python run.py --version
 
 ---
 
-## 配置说明
+## 使用自己的论文
 
-默认读取 **`config/local.yaml`**，可用 `--config` 指定其他路径。
-
-| 配置项 | 含义 |
-|--------|------|
-| `input_path` / `output_path` | 默认输入 / 输出 TeX 路径 |
-| `mode` | `proofread`（默认）或 `rewrite`；决定本 run 三角色 system 提示词 |
-| `modes` | 可选：在 `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` 覆盖对应内置文案 |
-| `post_proofread_after_rewrite` | 为 `true` 且 `mode` 为 `rewrite` 时，`run.py` 再跑一轮 `proofread`（也可用命令行 `--post-proofread`） |
-| `post_proofread_max_iterations` | 第二轮订正的外层迭代上限（默认 `1`） |
-| `max_iterations` | 外层「整稿轮次」上限 |
-| `max_no_improve` | 单节连续未超过历史已采纳分时，达到该次数后跳过该节 |
-| `log_level` | 日志级别 |
-| `log_dir` | 日志目录 |
-| `ollama_healthcheck` | 为 `true` 时 `run.py` 启动前探测 `{主机}/api/tags`；非 Ollama 端点请改为 `false` |
-| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature` |
-
-字段说明与示例见 **`config/local.example.yaml`**。
-
-**优先级：** 命令行可覆盖项 **优于** YAML **优于** `runtime_config.DEFAULT_CONFIG` 中的默认值。
+- 使用命令行 **`--input`**、**`--output`**，或在 `config/local.yaml` 里设置 **`input_path` / `output_path`**。
+- 私人手稿勿纳入版本库（需要时把文件名加入 `.gitignore`）。仓库仅保留 **`sample_manuscript.tex`** 作为**演示**；个人常用的 `private-draft.tex` 默认已被忽略。
 
 ---
 
-## 命令行参数
+## 编辑风格（`mode`）
 
-| 参数 | 说明 |
+| 模式 | 说明 |
 |------|------|
-| `--input` | 输入 `.tex` 路径 |
-| `--output` | 输出 `.tex` 路径 |
-| `--config` | YAML 配置路径 |
-| `--max-iterations` | 外层迭代上限 |
-| `--max-no-improve` | 单节无提升次数上限 |
-| `--log-level` | 日志级别 |
-| `--mode` | `proofread` 或 `rewrite`，覆盖 YAML 中的 `mode` |
-| `--post-proofread` | `rewrite` 完成后自动再跑一轮 `proofread`（本进程内第二次 `invoke`） |
-| `--allow-llm-failures` | LLM 出错时仍返回退出码 0（默认：有错则退出码 1） |
+| **`proofread`**（默认） | 以审稿问题为牵引做**较小、较安全**的修改。 |
+| **`rewrite`** | 在单节内可做**更大范围**的句式与衔接调整；**禁止**编造实验/结论，**禁止**破坏 `\cite`、`\ref`、`\label` 与数学环境等。 |
+
+命令行 **`--mode`** 会覆盖当次运行 YAML 中的 `mode`。
+
+---
+
+## 可选：重写后再订正
+
+在 **`--mode rewrite`** 时加上 **`--post-proofread`**（或在 YAML 设 `post_proofread_after_rewrite: true`），会在同一命令内再跑一轮 **`proofread`** 图，**额外消耗**模型时间；第二轮外层迭代上限由 **`post_proofread_max_iterations`** 控制。
+
+---
+
+## 输出在哪里
+
+- **润色后的 TeX：** `--output` 或 `output_path` 指定（常见为 `output.tex`；该文件名默认在 `.gitignore` 中，避免误提交）。
+- **日志：** 在 **`log_dir`**（默认 `logs/`），形如 `run_YYYYMMDD_HHMMSS.log`。
+
+若部分模型调用失败，**`run.py` 仍会写出当前 TeX**，但默认以退出码 **`1`** 结束，除非使用 **`--allow-llm-failures`**。
+
+---
+
+## 常用配置项
+
+默认读取 **`config/local.yaml`**，可用 **`--config`** 指定其他路径。
+
+| 配置项 | 含义 |
+|--------|------|
+| `input_path` / `output_path` | 默认输入、输出 TeX 路径 |
+| `mode` | `proofread` 或 `rewrite` |
+| `post_proofread_after_rewrite` | 与 `rewrite` 同时为真时，再跑一轮 `proofread`（也可用 `--post-proofread`） |
+| `post_proofread_max_iterations` | 第二轮订正的外层迭代上限 |
+| `max_iterations` | 整稿外层轮次上限 |
+| `max_no_improve` | 单节连续未超过「上次采纳分」时的重试上限，达到后跳过该节 |
+| `log_level` / `log_dir` | 日志级别与目录 |
+| `ollama_healthcheck` | 为 `true` 时启动前探测 Ollama `GET /api/tags`；非 Ollama 服务请改为 `false` |
+| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature` |
+
+更完整示例见 **`config/local.example.yaml`**。
+
+**优先级：** 命令行可覆盖项 **优于** YAML **优于** 内置默认值。
+
+---
+
+## 常用命令行参数
+
+| 参数 | 含义 |
+|------|------|
+| `--input` / `--output` | 输入、输出 `.tex` |
+| `--config` | YAML 路径（默认 `config/local.yaml`） |
+| `--mode` | `proofread` 或 `rewrite` |
+| `--post-proofread` | `rewrite` 完成后衔接一轮 `proofread` |
+| `--max-iterations` / `--max-no-improve` | 覆盖迭代相关上限 |
+| `--log-level` | 如 `INFO`、`DEBUG` |
+| `--allow-llm-failures` | 部分 LLM 失败时仍返回退出码 `0` |
 | `--version` | 打印版本 |
 
 ---
 
-## 编辑模式（订正 / 重写）
-
-| 模式 | 说明 |
-|------|------|
-| `proofread` | 以审稿问题与 span 为牵引做**最小必要修改**；Critic 按「小改动下是否改善」打分。**默认**，与项目原有行为一致。 |
-| `rewrite` | 允许在整段内**重组句式、加强衔接、统一术语**；禁止虚构实验/数据/结论，禁止删除或破坏 `\cite`、`\ref`、`\label` 及数学环境；Critic 的评分标准与此一致。 |
-
-**OpenAI 兼容**与 **`ollama_native`** 两条后端均使用当前模式下的同一套文案；`run.py` 启动日志与各 LLM 节点调用日志中会带 `mode=...`。
-
-**优先级：** 命令行 `--mode` **优于** YAML `mode` **优于** 内置默认 `proofread`。
-
----
-
-## 迭代与打分语义
-
-1. **节内循环**：对每个解析出的节依次执行 Reviewer → Editor → Critic → Aggregator，再进入下一节。
-2. **Aggregator**：将本轮 Critic 分数与该节 **上次已采纳分** 比较。
-   - **更高** → 采纳，写入历史，更新全文快照 `best_tex`。
-   - **否则** → 将该节内容回滚到上次采纳版本。
-   - 若尚无已采纳分，基线为 `0.0`。
-3. **跳过节**：连续 `max_no_improve` 次未超过该节历史最优则标记跳过（见状态中 `skipped_section_ids`）。
-4. **外层停止**：每完成一整轮全文章节后，由 `iteration_step` 与路由逻辑判断是否再开下一轮，直到达到 `max_iterations` 或触发提前结束条件（例如整轮无任何采纳）。
-
-结束时的分数摘要为 **各节最新已采纳分**，**不使用**单一全局「best score」跨节混排，以免误导。
-
----
-
-## LLM 后端
+## LLM 后端（简表）
 
 | `llm.backend` | 适用场景 |
 |---------------|----------|
-| `openai_compatible`（默认） | 任意 OpenAI 风格 `/v1`：Ollama、vLLM、云端等；使用 `langchain-openai` 与结构化输出。 |
-| `ollama_native` | 需原生参数（如关闭 Qwen3.5 thinking）时；依赖 `langchain-ollama`；Editor 对长 LaTeX 的 JSON 带有限次重试解析。 |
-
----
-
-## 日志与退出码
-
-- 日志同时输出到控制台与 `log_dir`（默认 `logs/`），文件名形如 `run_<时间戳>.log`。
-- 任意 LLM 节点抛错会累计 `llm_failure_count`。**默认下 `run.py` 仍会写出当前输出 TeX，但进程以退出码 `1` 结束**，避免脚本误判为成功。仅在明确需要时使用 `--allow-llm-failures` 得到退出码 `0`。
-
-Editor 若返回无法解析的 JSON（截断、引号未转义等），日志中可能出现 **WARNING**，内部会重试最多 3 次。
-
----
-
-## 开发与测试
-
-```bash
-python -m pytest -q
-python -m ruff check .
-```
-
-新手向测试说明见 **`TESTING_GUIDE_ZH.md`**。
-
-**VS Code / Cursor**：仓库含 `.vscode/launch.json` 与 `tasks.json`，请将其中 Python 解释器路径改为你本机环境。
+| **`openai_compatible`**（默认） | 标准 OpenAI 风格 `/v1`：Ollama、vLLM、多数云 API。 |
+| **`ollama_native`** | 需原生参数（如关闭部分 Qwen 的 thinking）；依赖 `langchain-ollama`。 |
 
 ---
 
@@ -244,14 +176,14 @@ python -m ruff check .
 
 | 现象 | 处理建议 |
 |------|----------|
-| `ModuleNotFoundError` | 在已激活环境中安装 `requirements-lock.txt` 或 `requirements.txt`；`ollama_native` 需安装 `langchain-ollama`。 |
-| 本机 Ollama 连接异常、502 | 将 `llm.base_url` 设为 `http://127.0.0.1:11434/v1`，或为本地地址配置代理例外。 |
-| 请求频繁重试 / 超时 | 适当增大 YAML 中 `llm.request_timeout`，或去掉过小的超时设置。 |
-| 终端里 TeX 被截断 | 完整结果在输出文件中；终端仅预览。 |
-| Editor 多次 JSON 解析警告 | 大节内容时增大上下文或生成长度、换更守 JSON 约束的模型，或考虑拆分章节。 |
+| `ModuleNotFoundError` | 在已激活环境中重装 `requirements-lock.txt`；`ollama_native` 需安装 `langchain-ollama`。 |
+| 无法连接 Ollama | 确认已 `ollama serve`；`base_url` 可试 `http://127.0.0.1:11434/v1`；非 Ollama 服务请关闭 `ollama_healthcheck`。 |
+| 超时或很慢 | 在 YAML 中增大或去掉 `llm.request_timeout`。 |
+| 终端里 TeX 被截断 | 完整结果在输出 `.tex` 文件中。 |
+| 日志里 Editor JSON 警告 | 过长小节：换更大上下文、更守 JSON 的模型，或拆分章节。 |
 
 ---
 
 ## 版本
 
-`python run.py --version` 应与 `_version.py` 及 `pyproject.toml` 中 `[project].version` 一致；发版时请同步修改。
+执行 `python run.py --version`，应与 `_version.py` 及 `pyproject.toml` 中版本一致（发版时请同步修改）。

@@ -11,7 +11,7 @@ LABEL_COMMAND = "\\label"
 
 
 def _is_escaped(tex: str, index: int) -> bool:
-    """判断当前位置是否被反斜杠转义，避免误判 LaTeX 特殊字符。"""
+    """判断 index 处是否被奇数个反斜杠转义 / whether position ``index`` is escaped by an odd run of backslashes."""
     slash_count = 0
     pos = index - 1
     while pos >= 0 and tex[pos] == "\\":
@@ -21,7 +21,7 @@ def _is_escaped(tex: str, index: int) -> bool:
 
 
 def _is_commented(tex: str, index: int) -> bool:
-    """判断当前位置之前是否已有未转义的 %，用于跳过注释中的 section。"""
+    """index 之前同一行内是否存在未转义的 %（即位于 TeX 注释中）/ true if an unescaped ``%`` starts a comment before ``index``."""
     line_start = tex.rfind("\n", 0, index) + 1
     pos = line_start
     while pos < index:
@@ -32,7 +32,7 @@ def _is_commented(tex: str, index: int) -> bool:
 
 
 def _parse_balanced(tex: str, start: int, open_char: str, close_char: str) -> int | None:
-    r"""解析成对括号，支持 title 中嵌套 \label{...} 这类 LaTeX 命令。"""
+    r"""解析成对括号；支持 title 内嵌 ``\label{...}`` 等 / parse balanced delimiters; supports nested LaTeX in titles."""
     if start >= len(tex) or tex[start] != open_char:
         return None
 
@@ -51,7 +51,7 @@ def _parse_balanced(tex: str, start: int, open_char: str, close_char: str) -> in
 
 
 def _parse_section_command(tex: str, start: int) -> int | None:
-    r"""返回完整 \section 命令的结束位置；解析失败时返回 None。"""
+    r"""返回完整 ``\section`` 命令结束下标；失败返回 ``None`` / end index of full ``\section`` cmd, or ``None``."""
     if not tex.startswith(SECTION_COMMAND, start):
         return None
     if start > 0 and tex[start - 1].isalpha():
@@ -76,7 +76,7 @@ def _parse_section_command(tex: str, start: int) -> int | None:
 
 
 def _find_section_commands(tex: str) -> list[tuple[int, int]]:
-    """扫描全文，找出所有真实 section 命令的起止位置。"""
+    """扫描全文，收集非注释区内真实 ``\section`` 命令的 (start, end) / scan for real ``\section`` spans outside comments."""
     commands = []
     pos = 0
     while True:
@@ -94,8 +94,7 @@ def _find_section_commands(tex: str) -> list[tuple[int, int]]:
 
 
 def split_prefix_and_sections(tex: str) -> tuple[str, list[Section]]:
-    """Split ``(prefix, sections)``: prefix is text before the first ``\\section``; sections as usual.
-    If there is no ``\\section``, returns ``(tex, [])``."""
+    """切分为 (前缀, 节列表)：前缀为首个 ``\\section`` 之前；无节时 ``(tex, [])`` / split into prefix and sections; empty if no ``\\section``."""
     commands = _find_section_commands(tex)
     if not commands:
         return tex, []
@@ -120,7 +119,7 @@ def split_into_sections(tex: str) -> list[Section]:
     return sections
 
 
-# After ``\\section`` titles, ``\n`` two-char sequences are usually JSON artifacts, not ``\\neq`` etc.
+# ``\\section`` 标题后若出现字面量 ``\\``+``n`` 常为 JSON 伪影，勿与 ``\\neq`` 等混淆 / two-char ``\\n`` after titles is often JSON leakage, not ``\\neq``.
 _PROTECTED_AFTER_BACKSLASH_N = (
     "abla",
     "eq",
@@ -149,7 +148,7 @@ _PROTECTED_AFTER_BACKSLASH_N = (
 
 
 def normalize_fake_newlines_in_latex(s: str) -> str:
-    r"""Turn spurious two-char ``\``+``n`` (model JSON leakage) into real newlines without eating ``\neq``, ``\nabla``, …"""
+    r"""将 JSON 中误写的两字符 ``\``+``n`` 转为真实换行，且保留 ``\neq``、``\nabla`` 等合法命令 / turn spurious two-char ``\``+``n`` into real newlines without eating ``\neq``, ``\nabla``, …"""
     out: list[str] = []
     i = 0
     n = len(s)
@@ -169,7 +168,7 @@ def normalize_fake_newlines_in_latex(s: str) -> str:
 
 
 def strip_leading_section_command(content: str) -> str:
-    """清理 LLM 误输出到正文开头的重复 section/title 信息。"""
+    """去掉正文开头误重复的 \\section 标题行（及紧随 label）/ strip duplicate leading ``\\section`` (and following ``\\label``) from body."""
     leading_len = len(content) - len(content.lstrip())
     start = leading_len
     end = _parse_section_command(content, start)
@@ -203,7 +202,7 @@ def assemble_output_tex(
     current_tex: str,
     sections: list[Section],
 ) -> str:
-    """Full document for writing: prefix + rendered section bodies (``best_tex`` / ``current_tex``)."""
+    """写盘用全文：前缀 + 渲染后的正文（``best_tex`` 或 ``current_tex``）/ full document for disk: prefix + rendered bodies."""
     body = best_tex or current_tex
     if not body and sections:
         body = render_sections(sections)

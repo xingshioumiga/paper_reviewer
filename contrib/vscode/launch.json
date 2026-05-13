@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Demo",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_demo.py",
+      "console": "integratedTerminal",
+      "python": "${command:python.interpreterPath}",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run Demo (DEBUG log)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_demo.py",
+      "args": ["--log-level", "DEBUG"],
+      "console": "integratedTerminal",
+      "python": "${command:python.interpreterPath}",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run Pytest",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q"],
+      "console": "integratedTerminal",
+      "python": "${command:python.interpreterPath}",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
-"""Built-in system prompts and YAML merge helpers for ``proofread`` vs ``rewrite`` edit modes.
+"""Built-in system prompts and YAML merge for ``proofread`` vs ``rewrite``.
 
-每种模式包含 reviewer / editor / critic 三段 system 文案；可在 config 的 ``modes`` 下按模式覆盖。
+内置 proofread / rewrite 的 reviewer、editor、critic 文案；可在 YAML ``modes`` 下覆盖。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ VALID_EDIT_MODES = frozenset({"proofread", "rewrite"})
 
 
 def normalize_edit_mode(raw: str | None, default: str = "proofread") -> str:
-    """Return ``proofread`` or ``rewrite``; unknown values fall back to ``default``."""
+    """返回 ``proofread`` 或 ``rewrite``；未知值回退到 ``default`` / return mode; unknown → ``default``."""
     if raw is None:
         return default
     s = str(raw).strip().lower()
@@ -21,7 +21,7 @@ def normalize_edit_mode(raw: str | None, default: str = "proofread") -> str:
 
 
 def builtin_prompts() -> dict[str, dict[str, str]]:
-    """Default Chinese system prompts per mode and role (no YAML)."""
+    """无 YAML 时的默认中文 system 文案（按模式与角色）/ default Chinese system prompts per mode and role."""
     return {
         "proofread": {
             "reviewer": (
@@ -95,7 +95,7 @@ def builtin_prompts() -> dict[str, dict[str, str]]:
 
 
 def build_prompt_bundle(merged_config: dict[str, Any]) -> dict[str, dict[str, str]]:
-    """Deep-merge built-in prompts with optional ``config['modes'][mode_name][role]`` strings."""
+    """深度合并内置文案与 ``config['modes'][mode][role]`` 字符串覆盖 / deep-merge builtins with optional YAML overrides."""
     builtin = builtin_prompts()
     user_modes = merged_config.get("modes")
     if not isinstance(user_modes, dict):

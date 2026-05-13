@@ -7,12 +7,12 @@ from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
 
 
-# 端到端测试验证 mock 图和 CLI 入口能生成可用输出。
+# 端到端测试：验证 mock 图与 CLI 能产出可用结果 / E2E: mock graph and CLI produce usable output.
 def test_graph_invoke_generates_history(monkeypatch):
-    # Make score deterministic for stable tests.
+    # 固定随机分，保证测试稳定 / Fix critic score for deterministic tests.
     monkeypatch.setattr("langgraph_nodes.random.uniform", lambda a, b: 0.8)
 
-    tex = Path("private-draft.tex").read_text(encoding="utf-8")
+    tex = Path("sample_manuscript.tex").read_text(encoding="utf-8")
     initial_state = GraphState(original_tex=tex, max_iterations=1, max_no_improve=5)
     result = graph.invoke(initial_state)
     final_state = GraphState(**result) if isinstance(result, dict) else result

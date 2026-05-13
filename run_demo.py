@@ -18,7 +18,7 @@ from utils.logging_setup import setup_logging
 
 
 def parse_args() -> argparse.Namespace:
-    """解析参数；可与 ``config/local.yaml`` 叠加使用。"""
+    """解析参数；可与 ``config/local.yaml`` 合并使用 / parse args; combine with ``config/local.yaml``."""
     parser = argparse.ArgumentParser(description="Run the paper reviewer demo pipeline.")
     parser.add_argument("--input", dest="input_path", help="Input TeX file path")
     parser.add_argument("--output", dest="output_path", help="Output TeX file path")
@@ -57,7 +57,7 @@ def main() -> None:
     log_file = setup_logging(str(log_level), log_dir=log_dir)
     logger = logging.getLogger(__name__)
 
-    input_path = args.input_path or config.get("input_path", "private-draft.tex")
+    input_path = args.input_path or config.get("input_path", "sample_manuscript.tex")
     output_path = args.output_path or config.get("output_path", "output.tex")
     max_iterations = args.max_iterations or int(config.get("max_iterations", 1))
     max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))
@@ -84,7 +84,7 @@ def main() -> None:
     )
     result = graph.invoke(initial_state)
 
-    # LangGraph may return dict-like state or model instance.
+    # LangGraph 可能返回 dict 或模型实例 / LangGraph may return dict-like state or a model instance.
     if isinstance(result, dict):
         final_state = GraphState(**result)
     else:

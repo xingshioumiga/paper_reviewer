@@ -18,10 +18,10 @@ from langgraph_nodes import (
 )
 from langgraph_state import GraphState
 
-# Mock 版本图：用于快速验证流程，不调用真实 LLM。
+# Mock 版图：快速验证流程，不调用真实 LLM / mock graph for fast flow checks without a live LLM.
 builder = StateGraph(GraphState)
 
-# 注册节点
+# 注册节点 / register nodes
 builder.add_node("init", init_node)
 builder.add_node("reviewer", reviewer_node)
 builder.add_node("editor", editor_node)
@@ -30,17 +30,17 @@ builder.add_node("aggregator", aggregator_node)
 builder.add_node("next_section", next_section)
 builder.add_node("iteration_step", iteration_step)
 
-# 入口
+# 入口 / graph entry
 builder.set_entry_point("init")
 
-# 主流程
+# 主边：init → reviewer → … / main linear edges
 builder.add_edge("init", "reviewer")
 builder.add_edge("reviewer", "editor")
 builder.add_edge("editor", "critic")
 builder.add_edge("critic", "aggregator")
 builder.add_edge("aggregator", "next_section")
 
-# section loop：按 section 逐个处理；被跳过的 section 会在路由函数中略过。
+# 节内循环：逐节处理；已跳过节在路由中前进 / section loop; skipped sections advanced in router.
 builder.add_conditional_edges(
     "next_section",
     has_more_sections,
@@ -50,7 +50,7 @@ builder.add_conditional_edges(
     }
 )
 
-# iteration loop：整轮 section 处理结束后，再判断是否进入下一轮。
+# 外层循环：整轮节遍历结束后再判断是否下一轮 / outer loop after each full pass over sections.
 builder.add_conditional_edges(
     "iteration_step",
     route_after_iteration,

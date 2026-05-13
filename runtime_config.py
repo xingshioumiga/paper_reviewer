@@ -16,26 +16,26 @@ import yaml
 # 完整默认树；用户 YAML 在其上做深度合并。
 # Full default tree; user YAML is deep-merged on top.
 DEFAULT_CONFIG: dict[str, Any] = {
-    "input_path": "private-draft.tex",
+    "input_path": "sample_manuscript.tex",
     "output_path": "output.tex",
-    # proofread = minimal edits; rewrite = broader developmental polish (see README).
+    # proofread = 最小改动订正；rewrite = 发展性重写 / minimal edits vs broader developmental polish (see README).
     "mode": "proofread",
-    # Optional per-mode system prompt overrides: modes.<proofread|rewrite>.<reviewer|editor|critic>
+    # 可选：按模式与角色覆盖内置 system 文案 / optional per-mode system overrides: modes.<proofread|rewrite>.<reviewer|editor|critic>
     "modes": {},
     "max_iterations": 1,
     "max_no_improve": 100,
     "log_level": "INFO",
     "log_dir": "logs",
-    # run.py 启动时是否请求 Ollama /api/tags；使用非 Ollama 的 OpenAI 兼容端点时改为 false。
+    # run.py 启动前是否探测 Ollama /api/tags；非 Ollama 端点请设 false / probe Ollama before run; set false for other hosts.
     "ollama_healthcheck": True,
-    # If true and mode is rewrite, run.py runs a second graph pass in proofread mode (extra LLM cost).
+    # 为 true 且 mode 为 rewrite 时 run.py 会再跑一轮 proofread（额外费用）/ second proofread pass after rewrite (extra LLM cost).
     "post_proofread_after_rewrite": False,
     "post_proofread_max_iterations": 1,
     "llm": {
         "base_url": "http://localhost:11434/v1",
         "api_key": "ollama",
-        # 不设 request_timeout 时与早期代码一致（由 LangChain / httpx 默认行为，等价于不按秒切断）。
-        # 可选：在 config/local.yaml 的 llm 下写 request_timeout: 600 等正数才启用。
+        # 不设 request_timeout 则沿用 LangChain/httpx 默认（不按秒硬断）/ omit for library default timeout.
+        # 可在 config/local.yaml 的 llm 下写 request_timeout: 600 等正数启用 / set positive seconds in local.yaml to enable.
         "reviewer": {
             "model": "qwen2.5:14b",
             "temperature": 0.1,

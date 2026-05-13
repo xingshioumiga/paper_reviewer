@@ -2,7 +2,7 @@ from langgraph_nodes import aggregator_node
 from langgraph_state import GraphState, HistoryItem, Section
 
 
-# 这些测试聚焦 aggregator 的采纳、回滚和 section 级跳过逻辑。
+# 这些测试聚焦 aggregator 的采纳、回滚与按节跳过逻辑 / tests for accept, rollback, and per-section skip in aggregator.
 def test_aggregator_compares_against_previous_same_section_and_rolls_back():
     state = GraphState(original_tex="")
     state.sections = [

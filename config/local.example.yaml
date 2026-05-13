@@ -1,11 +1,11 @@
-# Copy to ``config/local.yaml`` and edit (``local.yaml`` can stay machine-specific).
-# Do not put cloud API keys in files that you commit; for Ollama-only use ``api_key: ollama``.
-# Optional: use ``config/my.private.yaml`` (gitignored pattern ``*.private.yaml``) for secrets if you ever need them.
+# 复制为 ``config/local.yaml`` 后编辑（可仅本机使用）/ Copy to ``config/local.yaml`` and edit (machine-specific).
+# 勿将云端 API Key 提交到仓库；本机 Ollama 可用 ``api_key: ollama`` / do not commit cloud keys; use ``api_key: ollama`` for local Ollama.
+# 可选：密钥放 ``config/*.private.yaml``（已在 .gitignore）/ optional secrets in ``config/*.private.yaml`` (gitignored).
 
-input_path: private-draft.tex
+input_path: sample_manuscript.tex
 output_path: output.tex
 
-# proofread = minimal edits (default) | rewrite = broader developmental polish. CLI --mode overrides.
+# proofread = 最小订正（默认）| rewrite = 发展性重写；CLI ``--mode`` 可覆盖 / minimal edits (default) vs rewrite; CLI overrides.
 mode: proofread
 
 # If true and mode is rewrite, run.py runs a second pass in proofread (use --post-proofread to enable from CLI).

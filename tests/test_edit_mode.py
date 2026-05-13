@@ -1,4 +1,4 @@
-"""Edit mode (proofread vs rewrite): prompts, config merge, and state defaults."""
+"""编辑模式（proofread / rewrite）：提示词、配置合并与默认状态 / edit modes: prompts, config merge, defaults."""
 
 from pathlib import Path
 import sys

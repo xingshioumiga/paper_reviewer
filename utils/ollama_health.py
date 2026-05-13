@@ -1,6 +1,6 @@
 """Lightweight Ollama reachability check (does not use LangChain).
 
-用于 run.py 在长时间 graph.invoke 之前确认本机 ``ollama serve`` 可访问。
+在长时间 ``graph.invoke`` 前由 ``run.py`` 探测本机 ``ollama serve`` 是否可达 / used by ``run.py`` before long graph runs.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ from urllib.request import urlopen
 
 
 def check_ollama_tags(llm_cfg: dict[str, Any], timeout: float = 5.0) -> None:
-    """GET ``{origin}/api/tags``；失败时抛出带说明的 RuntimeError。
+    """GET ``{origin}/api/tags``；失败抛 ``RuntimeError`` / probe tags endpoint; raise ``RuntimeError`` on failure.
 
-    ``llm.base_url`` 通常为 ``http://host:11434/v1``；Ollama 原生 API 在根路径下。
+    ``llm.base_url`` 常为 ``http://host:11434/v1``；原生 API 在站点根路径 / ``llm.base_url`` is often ``.../v1``; native API lives at origin.
     """
     base = str(llm_cfg.get("base_url", "http://localhost:11434/v1"))
     parsed = urlparse(base)
@@ -30,6 +30,6 @@ def check_ollama_tags(llm_cfg: dict[str, Any], timeout: float = 5.0) -> None:
                 raise RuntimeError(f"Ollama {tags_url} returned HTTP {resp.status}")
     except URLError as e:
         raise RuntimeError(
-            f"无法连接 Ollama：{tags_url}（由 config 中 llm.base_url 推导）。"
-            f"请先在本机执行 ``ollama serve`` 并确认端口。原始错误: {e}"
+            f"无法连接 Ollama / cannot reach Ollama: {tags_url}（由 llm.base_url 推导 / derived from llm.base_url）。"
+            f"请先运行 ``ollama serve`` 并确认端口 / ensure ``ollama serve`` and port. 原始错误 / original error: {e}"
         ) from e

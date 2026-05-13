@@ -3,7 +3,7 @@ from langgraph_state import GraphState
 from paper_reviewer_tool import split_into_sections
 
 
-# 这些测试覆盖 section 路由、跳过逻辑和整轮无改进停止条件。
+# 覆盖节路由、跳过与「整轮无改进」停止条件 / routing, skips, and stop-when-no-improve for full passes.
 def test_has_more_sections_routes_to_reviewer_then_iteration_step():
     state = GraphState(original_tex="\\section{A}\ntext")
     state.sections = split_into_sections(state.original_tex)

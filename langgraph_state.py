@@ -43,11 +43,12 @@ class GraphState(BaseModel):
     Global graph state: current draft, sections list, history, and stop flags."""
 
     original_tex: str
-    # proofread | rewrite — selects system prompts for this run only (see prompt_modes).
+    # proofread | rewrite：本 run 的 system 提示集（见 prompt_modes）/ system prompts for this run (see prompt_modes).
     edit_mode: str = "proofread"
-    # TeX before the first ``\\section`` (preamble, title, abstract, ...); not edited by the graph.
+    # 首个 \\section 之前的 TeX（导言、标题、摘要等）；图内不修改 / TeX before first \\section; not edited in-graph.
     document_prefix: str = ""
-    current_tex: str = ""  # Latest ``render_sections`` body only (no ``document_prefix``).
+    # 最近一次 render_sections 的正文（不含 document_prefix）/ latest section-body render without prefix.
+    current_tex: str = ""
     run_started_at: float = 0.0
 
     sections: list[Section] = Field(default_factory=list)
@@ -56,16 +57,21 @@ class GraphState(BaseModel):
     issues: list[Issue] = Field(default_factory=list)
     history: list[HistoryItem] = Field(default_factory=list)
 
-    current_score: float = 0.0  # 本轮 critic 对「最后一次改写」的打分 / Latest critic score for last edit
-    best_tex: str = ""  # 最近一次采纳后的 section-body 快照；写盘时与 document_prefix 拼接 / Body-only snapshot
+    # 本轮 critic 对最后一次改写的打分 / critic score for the latest edit attempt.
+    current_score: float = 0.0
+    # 最近一次采纳后的正文快照；写盘时与 document_prefix 拼接 / accepted body snapshot; joined with prefix on write.
+    best_tex: str = ""
 
-    iteration: int = 0  # 已完成的外层轮次数（iteration_step 末尾递增）/ Finished outer rounds
-    max_iterations: int = 3  # 外层循环上限 / Cap on outer iterations
+    # 已完成的外层轮次（在 iteration_step 末尾递增）/ completed outer rounds (incremented in iteration_step).
+    iteration: int = 0
+    # 外层整稿轮次上限 / maximum outer full-document passes.
+    max_iterations: int = 3
 
     # 每段连续「未超过历史最优」的次数；达 max_no_improve 则跳过该段。
     # Per-section streak of non-improving tries; section is skipped when ≥ max_no_improve.
     section_no_improve_rounds: dict[str, int] = Field(default_factory=dict)
-    skipped_section_ids: list[str] = Field(default_factory=list)  # 已标记跳过的 section id / Skipped section ids
+    # 已标记跳过的 section id / section ids marked skipped after too many non-improving tries.
+    skipped_section_ids: list[str] = Field(default_factory=list)
 
     # 当前这一轮 scan 中被采纳的修改次数；轮末若为 0 则触发提前结束。
     # Accepted edits in the current full pass over sections; 0 → early stop next route.

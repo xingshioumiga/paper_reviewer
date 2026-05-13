@@ -23,11 +23,10 @@ from utils.ollama_health import check_ollama_tags
 
 
 # =========================
-# 参数解析
+# 参数解析 / CLI argument parsing
 # =========================
 def parse_args() -> argparse.Namespace:
-    """解析 CLI；优先级见 main 内「CLI > config > default」。
-    Parse CLI; precedence is documented in ``main``."""
+    """解析 CLI；优先级见 ``main`` 内说明 / parse CLI; precedence documented in ``main``."""
     parser = argparse.ArgumentParser(
         description="Run the LLM-powered paper reviewer pipeline."
     )
@@ -91,11 +90,10 @@ def _state_from_graph_result(result: GraphState | dict) -> GraphState:
 
 
 # =========================
-# 主函数
+# 主函数 / main entry
 # =========================
 def main() -> None:
-    """运行完整 LLM 流水线并在日志末尾写入 ``section_score_summary``。
-    Run full LLM pipeline; append ``section_score_summary`` as the final log line."""
+    """运行 LLM 流水线；日志末尾写入 ``section_score_summary`` / run LLM pipeline; log ``section_score_summary`` at end."""
 
     started_at = time.perf_counter()
     args = parse_args()
@@ -109,7 +107,7 @@ def main() -> None:
 
     primary_mode = str(config["mode"])
 
-    # 先配置日志，再初始化 LLM / 跑图，否则 httpx 等库在首次请求完成前可能没有任何文件记录。
+    # 先配日志再调 LLM，否则首次请求完成前可能没有文件日志 / configure logging before LLM so file logs exist early.
     log_level = args.log_level or config.get("log_level", "INFO")
     log_dir = str(config.get("log_dir", "logs"))
     log_file = setup_logging(str(log_level), log_dir=log_dir)
@@ -123,21 +121,21 @@ def main() -> None:
     init_llms_from_config(config)
     from LangGraph_loop_llm import graph
 
-    # ===== 参数优先级：CLI > config > default =====
-    input_path = args.input_path or config.get("input_path", "private-draft.tex")
+    # 优先级：CLI > config > 内置默认 / precedence: CLI > config > built-in defaults.
+    input_path = args.input_path or config.get("input_path", "sample_manuscript.tex")
     output_path = args.output_path or config.get("output_path", "output.tex")
 
     max_iterations = args.max_iterations or int(config.get("max_iterations", 1))
     max_no_improve = args.max_no_improve or int(config.get("max_no_improve", 100))
 
-    # ===== 读取输入 =====
+    # ===== 读取输入 / read input TeX =====
     input_file = Path(input_path)
     if not input_file.exists():
         raise FileNotFoundError(f"Input file not found: {input_file}")
 
     original_tex = input_file.read_text(encoding="utf-8")
 
-    # ===== 初始化 state =====
+    # ===== 初始化 state / build initial graph state =====
     initial_state = GraphState(
         original_tex=original_tex,
         max_iterations=max_iterations,
@@ -159,7 +157,7 @@ def main() -> None:
     )
 
     # =========================
-    # 执行 LangGraph（LLM）
+    # 执行 LangGraph（LLM）/ invoke LangGraph (LLM path)
     # =========================
     recursion_limit = 100
     result = graph.invoke(initial_state, {"recursion_limit": recursion_limit})
@@ -193,7 +191,7 @@ def main() -> None:
         total_failures += final_state.llm_failure_count
 
     # =========================
-    # 📊 输出统计
+    # 输出统计 / run summary to console
     # =========================
     section_scores = section_score_summary(final_state)
 
@@ -206,7 +204,7 @@ def main() -> None:
     print()
 
     # =========================
-    # 💾 保存结果
+    # 保存结果 TeX / write output TeX
     # =========================
     output_file = Path(output_path)
 
@@ -252,7 +250,7 @@ def main() -> None:
 
 
 # =========================
-# 入口
+# 入口 / script entry
 # =========================
 if __name__ == "__main__":
     main()

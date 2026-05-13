@@ -19,6 +19,7 @@ from paper_reviewer_tool import (
     split_prefix_and_sections,
     strip_leading_section_command,
 )
+# 保留：langchain StrOutputParser 示例（当前未使用）/ reserved: StrOutputParser example (unused).
 # from langchain_core.output_parsers import StrOutputParser
 
 from langchain_openai import ChatOpenAI
@@ -42,13 +43,13 @@ _PROMPT_BUNDLE: dict[str, dict[str, str]] | None = None
 
 
 def refresh_prompt_bundle(merged_config: dict[str, Any]) -> None:
-    """Rebuild global prompt table from merged YAML (call after each ``init_llms_from_config``)."""
+    """从合并后的 YAML 重建全局提示表（在每次 ``init_llms_from_config`` 后调用）/ rebuild global prompts from merged YAML."""
     global _PROMPT_BUNDLE
     _PROMPT_BUNDLE = build_prompt_bundle(merged_config)
 
 
 def system_prompt_for(role: str, mode: str) -> str:
-    """Return system prompt for ``reviewer`` | ``editor`` | ``critic`` and current edit mode."""
+    """返回 reviewer|editor|critic 在当前 ``mode`` 下的 system 文案 / return system prompt for role and edit ``mode``."""
     if role not in ("reviewer", "editor", "critic"):
         raise ValueError(f"invalid role: {role}")
     bundle = _PROMPT_BUNDLE if _PROMPT_BUNDLE is not None else build_prompt_bundle({})
@@ -58,20 +59,20 @@ def system_prompt_for(role: str, mode: str) -> str:
 
 
 def _escape_langchain_template_literals(s: str) -> str:
-    """``ChatPromptTemplate`` treats ``{...}`` as variables; JSON examples in system text need doubling."""
+    """``ChatPromptTemplate`` 将 ``{...}`` 当变量；system 中的 JSON 示例需双写花括号 / double braces for JSON literals in templates."""
     return s.replace("{", "{{").replace("}", "}}")
 
 
 def _pydantic_validate_json(schema: type[T], raw: str) -> T:
-    """将 JSON 字符串解析为 Pydantic 模型（兼容 v1 ``parse_raw`` 与 v2 ``model_validate_json``）。"""
+    """解析 JSON 字符串为 Pydantic（v1 ``parse_raw`` 或 v2 ``model_validate_json``）/ parse JSON string into a Pydantic model."""
     validate = getattr(schema, "model_validate_json", None)
     if callable(validate):
         return validate(raw)
-    return schema.parse_raw(raw)  # type: ignore[call-arg]
+    return schema.parse_raw(raw)  # type: ignore[call-arg]  # 旧版 Pydantic parse_raw / legacy Pydantic parse_raw.
 
 
 def _balanced_json_object(text: str, start_idx: int) -> str | None:
-    """从 ``start_idx`` 处的 ``{`` 起截取平衡的 ``{...}``，字符串内需跳过未配对括号（近似 JSON 规则）。"""
+    """自 ``start_idx`` 的 ``{`` 起截取平衡 ``{...}``，字符串内近似 JSON 引号规则 / balanced ``{...}`` from ``start_idx`` with string-aware rules."""
     if start_idx >= len(text) or text[start_idx] != "{":
         return None
     depth = 0
@@ -101,7 +102,7 @@ def _balanced_json_object(text: str, start_idx: int) -> str | None:
 
 
 def _iter_json_object_candidates(content: str, max_starts: int = 32) -> list[str]:
-    """从左到右枚举可能的顶层 JSON 对象子串（用于模型夹杂解释文字或输出残缺 JSON 时）。"""
+    """从左到右枚举候选顶层 JSON 子串（模型夹杂说明或残缺 JSON 时）/ enumerate candidate top-level JSON substrings."""
     candidates: list[str] = []
     start_search = 0
     seen: set[str] = set()
@@ -120,13 +121,13 @@ def _iter_json_object_candidates(content: str, max_starts: int = 32) -> list[str
 # 可选的流式调试：设置环境变量 DEBUG_LLM_STREAM=1 可在终端实时看到原始 token（用于确认 LLM 正在响应）。
 # Optional streaming debug: set env DEBUG_LLM_STREAM=1 to see raw tokens in terminal (confirms LLM is responding).
 class _DebugStreamingHandler(BaseCallbackHandler):
-    """将 LLM 生成的 token 实时打印到 stderr（不干扰结构化输出）。"""
+    """将 LLM token 实时写到 stderr，不干扰结构化输出 / stream tokens to stderr without breaking structured I/O."""
 
     def __init__(self, prefix: str = "") -> None:
         self.prefix = prefix
 
     def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
-        # 打印到 stderr，避免污染 stdout/结构化解析
+        # 打到 stderr，避免污染 stdout 与下游解析 / print to stderr to avoid breaking stdout / parsers.
         sys.stderr.write(f"{self.prefix}{token}")
         sys.stderr.flush()
 
@@ -140,19 +141,19 @@ class _DebugStreamingHandler(BaseCallbackHandler):
 
 
 def _maybe_streaming_callbacks(role: str) -> list[BaseCallbackHandler] | None:
-    """若设置了 DEBUG_LLM_STREAM=1，返回流式回调列表，否则 None。"""
+    """若 ``DEBUG_LLM_STREAM=1`` 则返回流式回调，否则 ``None`` / streaming callbacks when env flag set."""
     if os.getenv("DEBUG_LLM_STREAM", "").strip() in ("1", "true", "yes"):
         return [_DebugStreamingHandler(prefix=f"[{role}] ")]
     return None
 
 
 # =========================
-# Ollama 原生 API 支持（支持 think: false 等原生特性）
+# Ollama 原生 API 封装（如禁用 thinking）/ Ollama native API wrapper (e.g. disable thinking)
 # =========================
 class OllamaStructuredLLM:
-    """包装 Ollama 原生客户端，支持结构化输出和禁用 thinking 模式。
+    """包装 Ollama 原生客户端：结构化 JSON，并可禁用 thinking / wrap native Ollama for structured JSON and optional no-thinking.
 
-    适用于 Qwen3.5 等默认开启 thinking 的模型，通过原生 API 的 options 禁用。
+    适用于 Qwen3.5 等默认开启 thinking 的模型；通过 ``reasoning`` 等关闭 / for models with default “thinking”; disable via ``reasoning`` etc.
     """
 
     def __init__(
@@ -170,15 +171,14 @@ class OllamaStructuredLLM:
                 "langchain-ollama is required for Ollama native backend. "
                 "Install: pip install langchain-ollama"
             )
-        # 移除 /v1 后缀，Ollama 原生 API 使用根路径
+        # 去掉 /v1 后缀；原生 API 走根路径 / strip ``/v1``; native API uses origin root.
         base_url_clean = base_url.replace("/v1", "").rstrip("/")
         self.model = model
         self.role = role
         self.disable_thinking = disable_thinking
 
-        # Ollama 原生选项
-        # 注意：langchain-ollama 使用 reasoning 参数控制思考模式，不是 think
-        # reasoning=False 关闭 thinking 模式，reasoning=None 使用默认行为
+        # Ollama / langchain-ollama 选项：用 reasoning 控制思考，而非 think / use ``reasoning`` (not ``think``) for thinking mode.
+        # reasoning=False 关闭 thinking；None 表示模型默认 / ``False`` disables thinking; ``None`` uses model default.
         reasoning = False if disable_thinking else None
 
         llm_kw: dict[str, Any] = {
@@ -198,7 +198,7 @@ class OllamaStructuredLLM:
         )
 
     def invoke(self, messages: list, output_schema: type[T]) -> T:
-        """调用 Ollama 并解析为结构化输出；解析失败时有限次重试（缓解残缺 JSON）。"""
+        """调用 Ollama 并解析结构化输出；失败则有限次重试 / invoke Ollama; parse structured output with bounded retries."""
         retry_hint = (
             "上一版输出无法解析为合法 JSON。"
             "规则：字符串内的反斜杠必须写成 \\\\；字符串内不要出现未转义的双引号；"
@@ -224,16 +224,16 @@ class OllamaStructuredLLM:
         raise last_err
 
     def _parse_response(self, content: str, schema: type[T]) -> T:
-        """从模型响应中提取 JSON 并解析为 Pydantic 模型。"""
+        """从响应文本提取 JSON 并校验为 ``schema`` / extract JSON from response text and validate as ``schema``."""
         stripped = content.strip()
 
-        # 尝试直接解析（如果模型返回纯 JSON）
+        # 先试整段为纯 JSON / try whole response as raw JSON first.
         try:
             return _pydantic_validate_json(schema, stripped)
         except Exception:
             pass
 
-        # 尝试从 markdown 代码块中提取 JSON
+        # 再试 Markdown 围栏内的 JSON / then fenced ```json``` blocks.
         json_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)```', content)
         for block in json_blocks:
             try:
@@ -241,7 +241,7 @@ class OllamaStructuredLLM:
             except Exception:
                 continue
 
-        # 平衡括号截取多个候选（避免贪婪 .* 吞掉无效尾部或匹配错位）
+        # 平衡括号枚举多个 JSON 对象候选，避免贪婪匹配错位 / balanced-brace candidates to avoid greedy mismatch.
         for chunk in _iter_json_object_candidates(content):
             try:
                 return _pydantic_validate_json(schema, chunk)
@@ -251,44 +251,43 @@ class OllamaStructuredLLM:
         raise ValueError(f"No valid JSON found in response: {content[:500]}...")
 
 
-# LLM 结构化输出容器
-# Pydantic wrappers for structured LLM outputs.
+# LLM 结构化输出用的 Pydantic 容器 / Pydantic containers for structured LLM outputs.
 class ReviewOutput(BaseModel):
     issues: List[Issue] = Field(description="段落中发现的问题列表")
 
 
-# 定义一个容器，方便 LLM 一次性返回优化后的 LaTeX 段落内容，结构化输出
+# 编辑器一次性返回 refined_latex / editor returns ``refined_latex`` in one JSON object.
 class EditorOutput(BaseModel):
     refined_latex: str = Field(
         description="完全优化后的 LaTeX 段落内容。要求：严禁包含任何 Markdown 标签、解释文字或开场白。"
     )
 
 
-# 定义一个容器，方便 LLM 一次性返回评分结果，结构化输出
+# Critic 一次性返回 score / critic returns scalar ``score``.
 class ScoreOutput(BaseModel):
     score: float = Field(description="0到1之间的浮点数评分，0.9表示完美，0.5表示无改进")
 
 
 # =========================
-# Ollama 原生 Chain 类（放在 Output 类定义后避免前向引用）
+# Ollama 原生 Runnable 链（置于 Output 类之后避免前向引用）/ native Runnable chains after Output classes
 # =========================
 from langchain_core.runnables import Runnable
 
 
 class OllamaReviewerChain(Runnable):
-    """Ollama 原生的审稿链，返回 ReviewOutput。"""
+    """Ollama 审稿 Runnable；返回 ``ReviewOutput`` / Ollama reviewer runnable returning ``ReviewOutput``."""
 
     def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ReviewOutput:
-        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
         if hasattr(inputs, "to_messages"):
-            # 如果是 ChatPromptValue，直接使用其消息并添加系统提示
+            # 直接使用其消息并加 system / reuse messages and prepend system.
             messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
         else:
-            # 如果是字典，按原逻辑处理
+            # 普通 dict 输入路径 / plain dict input path.
             title = inputs.get("title", "")
             content = inputs.get("content", "")
             messages = [
@@ -299,14 +298,14 @@ class OllamaReviewerChain(Runnable):
 
 
 class OllamaEditorChain(Runnable):
-    """Ollama 原生的编辑链，返回 EditorOutput。"""
+    """Ollama 编辑 Runnable；返回 ``EditorOutput`` / Ollama editor runnable returning ``EditorOutput``."""
 
     def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> EditorOutput:
-        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
         if hasattr(inputs, "to_messages"):
             messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
         else:
@@ -324,14 +323,14 @@ class OllamaEditorChain(Runnable):
 
 
 class OllamaCriticChain(Runnable):
-    """Ollama 原生的评分链，返回 ScoreOutput。"""
+    """Ollama 评分 Runnable；返回 ``ScoreOutput`` / Ollama critic runnable returning ``ScoreOutput``."""
 
     def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ScoreOutput:
-        # 处理 ChatPromptValue 对象（来自 prompt | chain 管道）
+        # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
         if hasattr(inputs, "to_messages"):
             messages = [SystemMessage(content=self.system_prompt)] + list(inputs.to_messages())
         else:
@@ -361,7 +360,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
     global llm_structured_reviewer, llm_strucured_editor, llm_structured_critic
 
     merged = merge_config(DEFAULT_CONFIG, config or {})
-    # Canonical edit mode + prompt bundle (OpenAI 节点按 state.edit_mode 取词；Ollama 链在 init 时绑定当前 mode)。
+    # 规范化编辑模式并刷新全局提示表 / canonicalize mode and refresh global prompt table.
     mode_resolved = normalize_edit_mode(merged.get("mode"))
     merged["mode"] = mode_resolved
     refresh_prompt_bundle(merged)
@@ -388,12 +387,12 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         except (TypeError, ValueError):
             pass
 
-    # 选择后端：openai_compatible（默认）或 ollama_native
+    # 后端：openai_compatible（默认）或 ollama_native / backend selection.
     backend = str(llm_cfg.get("backend", "openai_compatible")).lower()
     use_ollama_native = backend == "ollama_native"
 
     if use_ollama_native:
-        # Ollama 原生 API 模式（支持 think: false 等原生选项）
+        # Ollama 原生路径（reasoning 等）/ Ollama native path (reasoning options).
         if not _OLLAMA_AVAILABLE:
             raise ImportError(
                 "backend='ollama_native' requires langchain-ollama. "
@@ -429,7 +428,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             role="critic",
         )
 
-        # 使用自定义链包装 Ollama 客户端（system 与当前 mode 一致）
+        # Runnable 包装原生客户端；system 与当前 mode 一致 / Runnable wrappers; system prompt matches resolved mode.
         llm_structured_reviewer = OllamaReviewerChain(
             ollama_reviewer, system_prompt_for("reviewer", mode_resolved)
         )
@@ -441,7 +440,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         )
 
     else:
-        # OpenAI 兼容模式（默认，适合生产部署和多云接入）
+        # OpenAI 兼容路径（ChatOpenAI + structured_output）/ OpenAI-compatible path.
         def _chat_kw(temperature: float, model: str, role: str) -> dict[str, Any]:
             kw: dict[str, Any] = {
                 "model": model,
@@ -451,7 +450,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             }
             if request_timeout is not None:
                 kw["request_timeout"] = request_timeout
-            # 若开启流式调试，传入回调；不影响整体逻辑，仅用于观察 LLM 是否正在生成。
+            # 流式调试回调：仅观察生成过程，不改变业务逻辑 / streaming debug callbacks for observation only.
             callbacks = _maybe_streaming_callbacks(role)
             if callbacks:
                 kw["callbacks"] = callbacks
@@ -472,7 +471,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
         llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
 
-    # 统一日志输出
+    # 记录最终选用的模型与超时 / log resolved models and timeout.
     logging.getLogger(__name__).info(
         "init_llms_from_config: mode=%s backend=%s base_url=%s request_timeout=%r "
         "reviewer_model=%s editor_model=%s critic_model=%s",
@@ -493,7 +492,7 @@ init_llms_from_config({})
 
 
 def _flush_log_handlers() -> None:
-    """Ensure pre-invoke lines hit disk before a blocking LLM call."""
+    """在阻塞 LLM 调用前刷新 handler，确保日志落盘 / flush handlers before blocking LLM calls so logs hit disk."""
     for h in logging.getLogger().handlers:
         try:
             h.flush()
@@ -502,14 +501,14 @@ def _flush_log_handlers() -> None:
 
 
 def _elapsed_seconds(state: GraphState) -> float:
+    """自 ``run_started_at`` 起的单调时钟秒数 / monotonic seconds since ``run_started_at``."""
     if not state.run_started_at:
         return 0.0
     return time.monotonic() - state.run_started_at
 
 
 def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
-    """供日志使用：(外层迭代显示值, max_iter, 当前节序号, 总节数, 已用秒数)。
-    For logging: (1-based iteration display, max, section #, total sections, elapsed s)."""
+    """日志用元组：(外层轮次显示, 上限, 当前节号, 总节数, 秒) / tuple for log formatting."""
     section_count = len(state.sections)
     section_number = min(state.current_section_index + 1, section_count)
     return (
@@ -522,14 +521,12 @@ def _progress_args(state: GraphState) -> tuple[int, int, int, int, float]:
 
 
 def _is_section_skipped(state: GraphState, section_id: str) -> bool:
-    """该段是否因连续无提升已被列入跳过列表。
-    Whether this section is skipped after too many non-improving edits."""
+    """该节是否已在跳过列表 / whether ``section_id`` is in ``skipped_section_ids``."""
     return section_id in state.skipped_section_ids
 
 
 def _next_active_section_index(state: GraphState, start_index: int) -> int:
-    """从 start_index 起找第一个未被跳过的段落索引；若无则返回 len(sections)。
-    Next section index ≥ start_index that is not skipped, or len(sections) if none."""
+    """自 ``start_index`` 起第一个未跳过节的索引；无则 ``len(sections)`` / first non-skipped index from ``start_index``."""
     index = start_index
     while index < len(state.sections):
         if not _is_section_skipped(state, state.sections[index].id):
@@ -539,8 +536,7 @@ def _next_active_section_index(state: GraphState, start_index: int) -> int:
 
 
 def section_score_summary(state: GraphState) -> list[tuple[str, float]]:
-    """按文档顺序返回 (section_id, 该段最近一次「采纳」分数)；从未采纳则为 0.0。
-    Document-ordered (section_id, latest accepted critic score); 0.0 if never accepted."""
+    """文档序 (section_id, 最近采纳分)；无采纳记 0.0 / document-ordered accepted scores; default 0.0."""
     accepted_scores: dict[str, float] = {}
     for item in state.history:
         if item.accepted:
@@ -548,9 +544,9 @@ def section_score_summary(state: GraphState) -> list[tuple[str, float]]:
     return [(section.id, accepted_scores.get(section.id, 0.0)) for section in state.sections]
 
 
-# --- 1 init：解析 \\section、重置计数器与计时 ---
-# --- 1 init: parse sections, reset counters and timer ---
+# --- 1 init：解析 \\section、重置计数与计时 / parse sections, reset counters and timer ---
 def init_node(state: GraphState) -> GraphState:
+    """解析 ``\\section``、填充 ``document_prefix``/``sections``、初始化计时与计数 / parse TeX, init state and timers."""
     state.run_started_at = time.monotonic()
     prefix, sections = split_prefix_and_sections(state.original_tex)
     state.document_prefix = prefix
@@ -578,12 +574,12 @@ def init_node(state: GraphState) -> GraphState:
     return state
 
 
-# --- 2 reviewer (mock)：占位问题列表，便于离线测图 ---
-# --- 2 reviewer (mock): stub issues for offline graph tests ---
+# --- 2 reviewer (mock)：占位 issues，离线测图 / stub issues for offline graph tests ---
 def reviewer_node(state: GraphState) -> GraphState:
+    """Mock 审稿：写入固定占位 issues / mock reviewer: attach stub issues."""
     section = state.sections[state.current_section_index]
 
-    # Mock：固定问题；生产路径见 reviewer_node_llm。
+    # Mock：固定占位问题；生产见 reviewer_node_llm / stub issues; production path is ``reviewer_node_llm``.
     issues = [
         Issue(
             section_id=section.id,
@@ -604,19 +600,19 @@ def reviewer_node(state: GraphState) -> GraphState:
     return state
 
 def reviewer_node_llm(state: GraphState) -> GraphState:
-    """LLM 审稿：对当前 section 的 title+content 产出 Issue 列表。"""
+    """LLM 审稿：对当前节 title+content 生成 ``Issue`` 列表 / LLM review: emit ``Issue`` list for current section."""
     # 当前待处理段落 / Current section under review
     section = state.sections[state.current_section_index]
 
-    # 定义针对学术论文和 LaTeX 格式的 Prompt
-    # 这里我针对大哥你的研究领域，加强了对公式和逻辑的审查要求
+    # 学术论文 + LaTeX 的 system 提示（转义花括号）/ academic LaTeX system prompt (brace-escaped).
+    # 可按需在 prompt_modes 中按领域调整 / tune per domain in ``prompt_modes`` if needed.
     sys_r = _escape_langchain_template_literals(system_prompt_for("reviewer", state.edit_mode))
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys_r),
         ("human", "标题: {title}\n\n内容:\n{content}")
     ])
 
-    # 构造链条并执行
+    # 组装并执行 LCEL 链 / build and run LCEL chain.
     chain = prompt | llm_structured_reviewer
 
     try:
@@ -634,10 +630,10 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
             "content": section.content
         })
         
-        # 将 LLM 返回的问题列表存入 state，并统一打上 section_id 标签
+        # 写入 issues，并统一 section_id / attach issues with correct ``section_id``.
         issues = []
         for issue in response.issues:
-            issue.section_id = section.id # 确保 ID 匹配
+            issue.section_id = section.id  # 与当前节对齐 / align with current section.
             issues.append(issue)
             
         state.issues = issues
@@ -645,10 +641,10 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
     except Exception as e:
         state.llm_failure_count += 1
         logger.error("reviewer_node_llm failed: %s", e, exc_info=True)
-        # 如果报错，给个空的 list 防止程序崩掉
+        # 失败时置空列表，避免中断整图 / on failure use empty list so graph continues.
         state.issues = []
 
-    # --- 保持大哥要求的原始日志输出格式 ---
+    # 与既有 reviewer 日志字段对齐 / keep log fields consistent with mock reviewer.
     logger.info(
         "reviewer_node: section_id=%s index=%s issues=%s progress=%s/%s section=%s/%s elapsed=%.2fs",
         section.id,
@@ -661,8 +657,9 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
 
 
 
-# --- 3 editor (mock)：按 issues 做简单文本追加 ---
+# --- 3 editor (mock)：按 issues 简单追加标记 / mock editor: append marker per issue ---
 def editor_node(state: GraphState):
+    """Mock 编辑：按 issues 在正文末尾追加标记 / mock editor: append marker per issue."""
     section = state.sections[state.current_section_index]
 
     old_content = section.content
@@ -675,15 +672,15 @@ def editor_node(state: GraphState):
     section.content = new_content
     state.sections[state.current_section_index] = section
 
-    # 先写入历史占位；分数与是否采纳由 critic + aggregator 后续填写。
+    # 先追加 history 占位；分数与采纳由 critic、aggregator 填写 / history placeholder; score/accept filled later.
     state.history.append(
         HistoryItem(
             iteration=state.iteration,
             section_id=section.id,
             before=old_content,
             after=new_content,
-            score=0.0,          # critic 后再更新
-            accepted=False      # aggregator 决定
+            score=0.0,          # critic 后更新 / updated by critic
+            accepted=False      # aggregator 决定 / decided by aggregator
         )
     )
     logger.info(
@@ -698,26 +695,26 @@ def editor_node(state: GraphState):
     return state
 
 def editor_node_llm(state: GraphState):
-    """LLM 改写：仅处理当前段 issues；无 issues 时仍追加一条 history 供 critic 对齐。"""
+    """LLM 编辑：仅处理当前节 issues；无 issues 时仍写 history 以对齐 critic / LLM edit; no issues still logs history for critic."""
     section = state.sections[state.current_section_index]
     
-    # ✅ 显式过滤：精准锁定当前段落的问题
+    # 仅保留当前节相关 issues / keep issues for the active section only.
     current_section_issues = [
         i for i in state.issues 
         if i.section_id == section.id
     ]
     
-    # 如果没问题，咱们就不浪费 Ollama 的算力了
+    # 无 issues 时仍写一条 history，便于 critic 对齐 / no issues: still append history for critic alignment.
     if not current_section_issues:
         logger.info("editor_node: section_id=%s no issues to fix, skipping.", section.id)
         state.history.append(HistoryItem(
             iteration=state.iteration,
             section_id=section.id,
             before=section.content,
-            after=section.content,   # ❗没有修改
+            after=section.content,   # 无文本改动 / no textual change
             score=0.0,
-            accepted=False # 没有修改，所以不接受
-        ))#如果没问题，为了保证critic的评分准确，所以需要记录历史
+            accepted=False  # 无改动则不标记采纳 / not accepted without edits
+        ))  # 仍需 history 以便 critic 有上下文 / history kept for critic context
         
         return state
 
@@ -727,7 +724,7 @@ def editor_node_llm(state: GraphState):
 ])
 
     sys_e = _escape_langchain_template_literals(system_prompt_for("editor", state.edit_mode))
-    # 2. 构建优雅的 ChatPrompt
+    # 构建 ChatPromptTemplate / build ChatPromptTemplate.
     prompt = ChatPromptTemplate.from_messages([
     ("system", sys_e),
     ("human", (
@@ -739,8 +736,7 @@ def editor_node_llm(state: GraphState):
     ))
 ])
 
-    # 3. 组成 LCEL 链条：Prompt -> LLM -> 纯文本解析
-    chain = prompt | llm_strucured_editor # | StrOutputParser()
+    chain = prompt | llm_strucured_editor  # 可选 StrOutputParser / optional StrOutputParser
 
     try:
         logger.info(
@@ -757,18 +753,18 @@ def editor_node_llm(state: GraphState):
             "issues": issues_text
         })
         
-        # 简单清洗，防止 LLM 不听话带上 Markdown 标签
+        # 去掉 Markdown 围栏等噪声 / strip markdown fences and noise.
         refined_content = refined_content.refined_latex.strip()
         refined_content = refined_content.replace("```latex", "").replace("```", "").strip()
         refined_content = strip_leading_section_command(refined_content)
         refined_content = normalize_fake_newlines_in_latex(refined_content)
 
-        # 更新 state
+        # 写回当前节正文 / write back section body.
         old_content = section.content
         section.content = refined_content
         state.sections[state.current_section_index] = section
         
-        # 记录历史
+        # 追加 editor 历史项 / append editor history item.
         state.history.append(HistoryItem(
             iteration=state.iteration,
             section_id=section.id,
@@ -782,7 +778,7 @@ def editor_node_llm(state: GraphState):
         state.llm_failure_count += 1
         logger.error("editor_node_llm failed: %s", e, exc_info=True)
 
-    # 5. 保持大哥要求的日志格式，同时稍微优化了显示精度
+    # 与 mock editor 日志字段一致 / align log fields with mock editor.
     logger.info(
         "editor_node: section_id=%s issues_applied=%s history_len=%s "
         "progress=%s/%s section=%s/%s elapsed=%.2fs",
@@ -795,8 +791,9 @@ def editor_node_llm(state: GraphState):
     return state
 
 
-# --- 4 critic (mock)：随机分，用于 pytest/e2e 稳定性（可 monkeypatch）---
+# --- 4 critic (mock)：随机分；pytest/e2e 可 monkeypatch / mock critic: random score; monkeypatch in tests ---
 def critic_node(state: GraphState) -> GraphState:
+    """Mock 评分：随机分，便于测试稳定（可 monkeypatch）/ mock critic: random score; monkeypatch for stability."""
     score = random.uniform(0.6, 0.95)
 
     state.current_score = score  # 供 aggregator 写入 history[-1].score / Fed to aggregator
@@ -810,7 +807,7 @@ def critic_node(state: GraphState) -> GraphState:
 
 
 def critic_node_llm(state: GraphState) -> GraphState:
-    """LLM 对 history 最后一条 before/after 打分（仅评价当前这次改写）。"""
+    """LLM 对 history 末条 before/after 打分（仅本轮改写）/ score last history before/after pair for this edit only."""
     # 与本轮 editor 输出对应的那条 history / Matches latest editor append
     if not state.history:
         logger.warning("critic_node: No history found to evaluate!")
@@ -819,14 +816,13 @@ def critic_node_llm(state: GraphState) -> GraphState:
     last_history = state.history[-1]
 
     sys_c = _escape_langchain_template_literals(system_prompt_for("critic", state.edit_mode))
-    # 3. 使用 ChatPromptTemplate 构建 LCEL 链
+    # 构建 ChatPromptTemplate / build ChatPromptTemplate.
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys_c),
         ("human", "修改前: {before}\n\n修改后: {after}")
     ])
 
-    # 4. 组成威力强大的 Chain
-    chain = prompt | llm_structured_critic
+    chain = prompt | llm_structured_critic  # LCEL：prompt → structured critic / LCEL: prompt → structured critic.
 
     try:
         logger.info(
@@ -846,11 +842,11 @@ def critic_node_llm(state: GraphState) -> GraphState:
     except Exception as e:
         state.llm_failure_count += 1
         logger.error("critic_node_llm failed: %s", e, exc_info=True)
-        score = 0.5  # 报错时的保底分
+        score = 0.5  # 失败时的中性默认分 / neutral default score on failure.
 
     state.current_score = score
 
-    # 5. 日志输出（保持风格一致）
+    # 与 mock critic 日志风格一致 / match mock critic logging style.
     logger.info(
         "critic_node: section_id=%s score=%.2f progress=%s/%s section=%s/%s elapsed=%.2fs",
         last_history.section_id,
@@ -935,7 +931,7 @@ def aggregator_node(state: GraphState):
 
 
 def next_section(state: GraphState) -> GraphState:
-    """线性扫描下一活跃段落索引（跳过已在 skipped_section_ids 中的段）。"""
+    """前进到下一未跳过节的索引 / advance ``current_section_index`` to next non-skipped section."""
     state.current_section_index = _next_active_section_index(
         state,
         state.current_section_index + 1,
@@ -949,7 +945,7 @@ def next_section(state: GraphState) -> GraphState:
 
 
 def has_more_sections(state: GraphState) -> str:
-    """路由：仍有未处理（且未跳过）的段 → reviewer；否则进入 iteration_step。"""
+    """路由：还有节 → ``reviewer``；否则 ``iteration_step`` / route to ``reviewer`` or ``iteration_step``."""
     state.current_section_index = _next_active_section_index(state, state.current_section_index)
     if state.current_section_index < len(state.sections):
         return "reviewer"
@@ -958,7 +954,7 @@ def has_more_sections(state: GraphState) -> str:
 
 
 def iteration_step(state: GraphState) -> GraphState:
-    """外层轮次结束：递增 iteration，根据本轮采纳数设置提前停止标记，并将指针重置到首个活跃段。"""
+    """外层一步：自增 ``iteration``，按本轮采纳数设提前停止，指针回到首节 / outer step: bump iteration, early-stop flags, reset index."""
     accepted_count = state.iteration_accepted_count
     state.iteration += 1
     state.stop_due_to_no_document_improve = accepted_count == 0
@@ -979,7 +975,7 @@ def iteration_step(state: GraphState) -> GraphState:
 
 
 def route_after_iteration(state: GraphState) -> str:
-    """外层路由：达最大轮次、上一轮全文无改进、或无活跃段 → end；否则回到 reviewer。"""
+    """外层路由：达上限、无全文改进或无活跃节 → ``end``；否则 ``reviewer`` / outer route: ``end`` or ``reviewer``."""
     if state.iteration >= state.max_iterations:
         return "end"
     if state.stop_due_to_no_document_improve:

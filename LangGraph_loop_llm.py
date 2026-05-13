@@ -7,25 +7,23 @@ from langgraph.graph import END, StateGraph
 
 from langgraph_nodes import (
     aggregator_node,
-    critic_node_llm,     # ✅ LLM版本
-    editor_node_llm,     # ✅ LLM版本
+    critic_node_llm,
+    editor_node_llm,
     has_more_sections,
     init_node,
     iteration_step,
     next_section,
-    reviewer_node_llm,   # ✅ LLM版本
+    reviewer_node_llm,
     route_after_iteration,
 )
 
 from langgraph_state import GraphState
 
 
-# LLM 版本图：Reviewer / Editor / Critic 都调用本地 Ollama 兼容接口。
+# LLM 版图：Reviewer / Editor / Critic 均调用配置的模型 / LLM graph: all three roles call the configured model.
 builder = StateGraph(GraphState)
 
-# =========================
-# ✅ 注册节点（LLM版本）
-# =========================
+# 注册节点（LLM）/ register LLM nodes
 builder.add_node("init", init_node)
 builder.add_node("reviewer", reviewer_node_llm)
 builder.add_node("editor", editor_node_llm)
@@ -34,21 +32,17 @@ builder.add_node("aggregator", aggregator_node)
 builder.add_node("next_section", next_section)
 builder.add_node("iteration_step", iteration_step)
 
-# =========================
-# ✅ 入口
-# =========================
+# 入口 / graph entry
 builder.set_entry_point("init")
 
-# =========================
-# ✅ 主流程
-# =========================
+# 主边 / main linear edges
 builder.add_edge("init", "reviewer")
 builder.add_edge("reviewer", "editor")
 builder.add_edge("editor", "critic")
 builder.add_edge("critic", "aggregator")
 builder.add_edge("aggregator", "next_section")
 
-# section loop：按 section 逐个处理；达到 section 级无提升上限的段落会被跳过。
+# 节内循环：逐节；达无提升上限的节会被跳过 / section loop; sections may be skipped after no-improve cap.
 builder.add_conditional_edges(
     "next_section",
     has_more_sections,
@@ -58,7 +52,7 @@ builder.add_conditional_edges(
     }
 )
 
-# iteration loop：整轮结束后，根据最大迭代数和全文是否改进决定是否继续。
+# 外层循环：整轮结束后按最大轮次与是否改进决定是否继续 / outer loop: stop or continue by max rounds and improvement.
 builder.add_conditional_edges(
     "iteration_step",
     route_after_iteration,
@@ -68,7 +62,4 @@ builder.add_conditional_edges(
     }
 )
 
-# =========================
-# 🚀 编译 graph
-# =========================
 graph = builder.compile()

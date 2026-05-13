@@ -60,7 +60,7 @@
 
 在项目根目录运行：
 
-`python -m pytest -q`
+`python -m pytest -q`（请先在项目目录激活你的虚拟环境，或把 `python` 换成你本机的解释器路径。）
 
 你会看到类似：
 
@@ -69,13 +69,13 @@
 
 ### 方式 B：一键任务（推荐）
 
-你已经有 `/.vscode/tasks.json`，可直接运行任务：
+将 `contrib/vscode/tasks.json` 复制到 `.vscode/tasks.json` 后，可在 VS Code / Cursor 里运行任务：
 
 - `Run Tests`
 
 ### 方式 C：调试测试
 
-你已经有 `/.vscode/launch.json`，可直接启动：
+将 `contrib/vscode/launch.json` 复制到 `.vscode/launch.json` 后，可直接启动调试：
 
 - `Run Pytest`
 

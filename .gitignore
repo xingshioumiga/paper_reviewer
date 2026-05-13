@@ -9,13 +9,23 @@ env/
 
 # Local-only overrides (never commit API keys)
 config/*.private.yaml
+# Real per-machine settings (copy from local.example.yaml); may contain API keys and paths
+config/local.yaml
 
-# IDE settings
+# Secrets in environment files
+.env
+.env.local
+.env.*.local
+
+# Windows Explorer duplicate names (often personal drafts / exports)
+* - 副本.*
+
+# User manuscript (use sample_manuscript.tex in repo as sample only)
+private-draft.tex
+
+# IDE settings (entire folder — never commit machine paths; see contrib/vscode/)
 .idea/
-.vscode/*
-!.vscode/settings.json
-!.vscode/launch.json
-!.vscode/tasks.json
+.vscode/
 
 # Test and tooling caches
 .pytest_cache/
@@ -28,6 +38,10 @@ logs/
 # Generated TeX outputs
 output.tex
 output*.tex
+# LaTeX build artifacts (can contain absolute paths)
+*.aux
+*.log
+outputNotes.bib
 
 # OS files
 .DS_Store

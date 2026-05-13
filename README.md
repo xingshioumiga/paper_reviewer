@@ -2,77 +2,30 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**paper-reviewer** is a small [LangGraph](https://github.com/langchain-ai/langgraph) demo that iteratively reviews and refines **LaTeX** manuscripts **one `\section{...}` block at a time**. Three LLM roles (**Reviewer → Editor → Critic**) propose edits and scores; an **aggregator** accepts changes only when the critic’s score improves the last accepted score for that section, otherwise it **rolls back**.
+**paper-reviewer** helps you polish **LaTeX** drafts **section by section** (`\section` / `\subsection`). A reviewer model lists issues, an editor proposes revised LaTeX, a critic scores the change, and the tool **accepts the edit only if the score improves**; otherwise it **rolls back** that section.
 
-Chinese documentation: **[README_zh.md](README_zh.md)**.
-
----
-
-## Table of contents
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [CLI](#cli)
-- [Edit modes (proofread vs rewrite)](#edit-modes-proofread-vs-rewrite)
-- [Iteration semantics](#iteration-semantics)
-- [LLM backends](#llm-backends)
-- [Logging and exit codes](#logging-and-exit-codes)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
+Chinese guide: **[README_zh.md](README_zh.md)**.
 
 ---
 
-## Features
+## What you can use it for
 
-- **Section-aware pipeline**: parses `\section` / `\subsection` hierarchy, processes sections in document order.
-- **Multi-role graph**: Reviewer (issues) → Editor (refined LaTeX) → Critic (0–1 score) → Aggregator (accept / rollback).
-- **Outer iterations**: configurable max full-document passes and per-section “no improvement” limits.
-- **OpenAI-compatible API** by default (e.g. local [Ollama](https://ollama.com/) `/v1`), plus optional **Ollama native** backend for models that need thinking disabled (e.g. Qwen3.5).
-- **Document prefix**: text before the first `\section` (preamble, title, abstract) is stored in `GraphState.document_prefix` and prepended when writing output; section bodies remain graph-internal.
-- **Literal `\n` cleanup**: after each editor JSON parse, a conservative pass converts spurious two-character `\`+`n` sequences into real newlines without eating `\neq`, `\nabla`, `\newcommand`, etc.
-- **Optional chained pass**: `--post-proofread` (or YAML `post_proofread_after_rewrite`) runs a second graph in `proofread` mode after `rewrite` (extra LLM cost; `post_proofread_max_iterations` caps the second pass).
-- **CLI + YAML** with clear precedence; file logging; optional Ollama health probe before the run.
-- **Tests** (pytest) and **ruff** for linting.
+- Run **locally** against **Ollama** or any **OpenAI-compatible** API (cloud or self-hosted).
+- Choose **light touch** fixes (`proofread`) or **broader** sentence- and paragraph-level polish (`rewrite`).
+- Optionally run a **second pass** in `proofread` right after `rewrite` (same command; uses more model time).
+- Get a new `.tex` file plus a **timestamped log** under `logs/`.
 
 ---
 
-## Architecture
-
-```mermaid
-flowchart LR
-  init[init] --> reviewer[reviewer]
-  reviewer --> editor[editor]
-  editor --> critic[critic]
-  critic --> aggregator[aggregator]
-  aggregator --> next_section[next_section]
-  next_section -->|more sections| reviewer
-  next_section -->|done pass| iteration_step[iteration_step]
-  iteration_step -->|another round| reviewer
-  iteration_step -->|stop| END([END])
-```
-
-- **`LangGraph_loop_llm.py`**: compiled graph using `*_llm` nodes (production path for `run.py`).
-- **`LangGraph_loop.py`**: same topology with **mock** nodes (used by `run_demo.py` and tests).
-- **`langgraph_state.py`**: Pydantic models for `GraphState`, sections, issues, and history.
-- **`langgraph_nodes.py`**: all node implementations, LLM wiring, and `init_llms_from_config`.
-- **`paper_reviewer_tool.py`**: LaTeX splitting (`split_prefix_and_sections`), `render_sections`, `assemble_output_tex`, and `normalize_fake_newlines_in_latex`.
-- **`prompt_modes.py`**: built-in system prompts per mode/role and merge with optional YAML `modes` overrides.
-
----
-
-## Requirements
+## What you need
 
 - **Python 3.10+**
-- For **`run.py`**: a running **OpenAI-compatible** server (typically Ollama) and pulled models as configured.
-- For **`run_demo.py`**: no LLM required.
+- For **`run.py`**: a reachable **OpenAI-compatible** endpoint (often Ollama at `http://127.0.0.1:11434/v1`) and the models you list in config.
+- For **`run_demo.py`**: nothing else (mock pipeline, no network).
 
 ---
 
-## Installation
+## Install
 
 ```bash
 git clone <your-repository-url>
@@ -83,56 +36,56 @@ python -m venv .venv
 **Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`  
 **macOS / Linux:** `source .venv/bin/activate`
 
-Install dependencies (pick one):
-
 ```bash
-# Reproducible pins (recommended)
 python -m pip install -r requirements-lock.txt
-
-# Loose package names only
-python -m pip install -r requirements.txt
 ```
 
-If you use **`llm.backend: ollama_native`** in YAML, also install:
+(Alternatively: `python -m pip install -r requirements.txt`.)
+
+If you set **`llm.backend: ollama_native`** in YAML, also install:
 
 ```bash
 python -m pip install langchain-ollama
 ```
 
-Copy and edit config:
+---
 
-```bash
-copy config\local.example.yaml config\local.yaml   # Windows
-# cp config/local.example.yaml config/local.yaml    # Unix
-```
+## First-time configuration
 
-Do **not** commit real cloud API keys. Use `api_key: ollama` for local Ollama, or put secrets in `config/*.private.yaml` (gitignored).
+1. Copy the example file to a local file (this path is **not** meant to be shared if it contains secrets):
+
+   ```bash
+   copy config\local.example.yaml config\local.yaml   # Windows
+   # cp config/local.example.yaml config/local.yaml    # macOS / Linux
+   ```
+
+2. Edit **`config/local.yaml`**. For local Ollama, `api_key: ollama` is typical. For cloud keys, **do not commit** them; you can use a `config/*.private.yaml` file (see `.gitignore`).
+
+3. Default input/output paths are set with `input_path` and `output_path`. The repository ships a small sample **`sample_manuscript.tex`**; point `input_path` at your own file when you work on a real manuscript.
 
 ---
 
-## Quick start
+## Run on the sample manuscript
 
-**Mock pipeline (no LLM):**
-
-```bash
-python run_demo.py
-```
-
-**Full LLM pipeline:**
+**Full pipeline (calls your configured LLM):**
 
 ```bash
 python run.py --input sample_manuscript.tex --output output.tex
 ```
 
-**Developmental polish (rewrite):**
+**Heavier “rewrite” style pass:**
 
 ```bash
 python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
 
-**Two-phase workflow (separate runs, separate logs):** run once with `--mode rewrite`, then after human edits run again with `--mode proofread` using the previous `.tex` as `--input`. Each invocation has its own in-memory `history` and log file. **Alternatively**, a single `run.py` can chain with `--mode rewrite --post-proofread` (second pass in-process, still a fresh `GraphState` for the proofread leg).
+**Try the flow without any LLM (mock graph):**
 
-Print version:
+```bash
+python run_demo.py
+```
+
+**Print version:**
 
 ```bash
 python run.py --version
@@ -140,102 +93,82 @@ python run.py --version
 
 ---
 
-## Configuration
+## Use your own paper
 
-Default file: **`config/local.yaml`**. Override path with `--config`.
+- Pass **`--input path\to\your.tex`** and **`--output path\to\out.tex`**, or set **`input_path` / `output_path`** in `config/local.yaml`.
+- Keep private drafts out of version control (for example add your filename to `.gitignore` if needed). The repo keeps **`sample_manuscript.tex`** only as a **demo**; your personal `private-draft.tex` is ignored by default.
 
-| Key | Purpose |
+---
+
+## Editing styles (`mode`)
+
+| Mode | In plain terms |
+|------|------------------|
+| **`proofread`** (default) | Small, targeted edits driven by reviewer issues—good when you want a **safe, minimal** pass. |
+| **`rewrite`** | Wider wording and flow improvements inside each section, **without** inventing results and **without** breaking cites, labels, refs, or math. |
+
+CLI **`--mode`** overrides the `mode` value in YAML for that run.
+
+---
+
+## Optional: proofread right after rewrite
+
+Add **`--post-proofread`** to a **`--mode rewrite`** run (or set `post_proofread_after_rewrite: true` in YAML) to chain a second graph pass in **`proofread`** mode. This costs extra LLM time; the number of outer rounds for that second pass is capped by **`post_proofread_max_iterations`**.
+
+---
+
+## Where your files go
+
+- **Output TeX:** the path you pass with `--output` or set as `output_path` (often `output.tex`; that name is gitignored so it is not committed by mistake).
+- **Logs:** under **`log_dir`** (default `logs/`), filenames like `run_YYYYMMDD_HHMMSS.log`.
+
+If some model calls fail, **`run.py` still writes the current TeX** but exits with code **`1`** unless you pass **`--allow-llm-failures`**.
+
+---
+
+## Main configuration keys
+
+Default file: **`config/local.yaml`**. Override with **`--config`**.
+
+| Key | Meaning |
 |-----|--------|
-| `input_path` / `output_path` | Default TeX input / output paths |
-| `mode` | `proofread` (default) or `rewrite`; selects reviewer/editor/critic system prompts for this run |
-| `modes` | Optional map: `modes.<proofread\|rewrite>.<reviewer\|editor\|critic>` strings override built-in prompts |
-| `post_proofread_after_rewrite` | If `true` and `mode` is `rewrite`, `run.py` runs a second pass in `proofread` (also enable with CLI `--post-proofread`) |
-| `post_proofread_max_iterations` | Outer iteration cap for the optional second `proofread` pass (default `1`) |
-| `max_iterations` | Maximum **outer** full-document passes |
-| `max_no_improve` | Per-section streak cap without beating the best accepted score → section skipped |
-| `log_level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `log_dir` | Directory for timestamped log files |
-| `ollama_healthcheck` | If `true`, `run.py` probes `{host}/api/tags` (disable for non-Ollama hosts) |
+| `input_path` / `output_path` | Default TeX input and output paths |
+| `mode` | `proofread` or `rewrite` |
+| `post_proofread_after_rewrite` | If `true` with `rewrite`, run a second `proofread` pass (also toggled by `--post-proofread`) |
+| `post_proofread_max_iterations` | Outer iteration cap for that second pass |
+| `max_iterations` | Maximum full-document outer rounds |
+| `max_no_improve` | Per-section cap: stop retrying a section if the score does not beat the last accepted one |
+| `log_level` / `log_dir` | Logging level and directory |
+| `ollama_healthcheck` | If `true`, `run.py` checks Ollama `GET /api/tags` before the run (turn off for non-Ollama hosts) |
 | `llm` | `backend`, `base_url`, `api_key`, optional `request_timeout`, per-role `model` / `temperature` |
 
-See **`config/local.example.yaml`** for commented examples (including `ollama_native` vs `openai_compatible`).
+More examples: **`config/local.example.yaml`**.
 
-**Precedence:** CLI arguments override YAML where supported; YAML overrides built-in defaults in `runtime_config.DEFAULT_CONFIG`.
-
----
-
-## CLI
-
-| Argument | Description |
-|----------|-------------|
-| `--input` | Input `.tex` path |
-| `--output` | Output `.tex` path |
-| `--config` | YAML config path (default `config/local.yaml`) |
-| `--max-iterations` | Outer iteration cap |
-| `--max-no-improve` | Per-section no-improve cap |
-| `--log-level` | Logging level |
-| `--mode` | `proofread` or `rewrite`; overrides YAML `mode` |
-| `--post-proofread` | After `rewrite`, run an automatic second pass in `proofread` (sets `post_proofread_after_rewrite` for this run) |
-| `--allow-llm-failures` | Exit `0` even if LLM calls failed (default: exit `1` when failures occurred) |
-| `--version` | Show version |
+**Precedence:** CLI arguments override YAML where supported; YAML overrides built-in defaults.
 
 ---
 
-## Edit modes (proofread vs rewrite)
+## Useful command-line flags
 
-| Mode | Intent |
+| Flag | Meaning |
 |------|--------|
-| `proofread` | Minimal edits guided by reviewer issues and spans; critic rewards small, safe improvements. **Default** — matches the original project behaviour. |
-| `rewrite` | Broader sentence- and paragraph-level polish (clarity, cohesion, terminology); still forbids inventing data, changing conclusions, or stripping `\cite`/`\ref`/`\label` and math environments. Critic rubric matches this goal. |
-
-**OpenAI-compatible and `ollama_native` paths** both use the same prompt set for the resolved mode. `run.py` logs `mode=...` at startup and LLM nodes log `mode=...` on invoke.
-
-**Precedence:** `--mode` CLI > YAML `mode` > built-in default `proofread`.
-
----
-
-## Iteration semantics
-
-1. **Section loop**: For each parsed section, in order: Reviewer → Editor → Critic → Aggregator, then advance to the next section.
-2. **Aggregator**: Compares the new critic score to the **last accepted** score for that `section_id`.
-   - **Higher** → accept, append to `history`, update `best_tex`.
-   - **Otherwise** → rollback that section’s body to the last accepted content.
-   - If there is no prior accepted score, the baseline is `0.0`.
-3. **Per-section skip**: If a section fails to improve for `max_no_improve` consecutive tries, it is skipped for the rest of the run (see `skipped_section_ids` in state).
-4. **Outer stop**: After a full pass, `iteration_step` may start another outer round until `max_iterations` or early-stop rules (e.g. no document-wide improvement) apply.
-
-There is **no single global “best score”** across sections in the summary; scores are reported **per section** to avoid mixing incomparable values.
+| `--input` / `--output` | Input and output `.tex` paths |
+| `--config` | YAML config path (default `config/local.yaml`) |
+| `--mode` | `proofread` or `rewrite` |
+| `--post-proofread` | After `rewrite`, run the chained `proofread` pass |
+| `--max-iterations` / `--max-no-improve` | Override iteration limits |
+| `--log-level` | e.g. `INFO`, `DEBUG` |
+| `--allow-llm-failures` | Exit `0` even if some LLM calls failed |
+| `--version` | Show version string |
 
 ---
 
-## LLM backends
+## LLM backends (short)
 
-| `llm.backend` | When to use |
-|---------------|-------------|
-| `openai_compatible` (default) | Any OpenAI-style `/v1` API: Ollama, vLLM, cloud providers, etc. Uses `langchain-openai` `ChatOpenAI` + structured output. |
-| `ollama_native` | Ollama with native options (e.g. disable thinking for Qwen3.5). Requires `langchain-ollama`. Uses JSON parsing with limited retries for long LaTeX in `refined_latex`. |
-
----
-
-## Logging and exit codes
-
-- Logs go to the console and to `log_dir` (default `logs/`), files like `run_<timestamp>.log`.
-- If any LLM node raises, `llm_failure_count` increments. **`run.py` still writes the output TeX** but exits with code **`1`** by default so automation does not treat a degraded run as success. Use `--allow-llm-failures` only when you explicitly want exit code `0`.
-
-Editor JSON parse warnings (e.g. malformed or truncated JSON from the model) are retried up to three times before failing the node.
-
----
-
-## Development
-
-```bash
-python -m pytest -q
-python -m ruff check .
-```
-
-Beginner-oriented testing notes (Chinese): **`TESTING_GUIDE_ZH.md`**.
-
-**VS Code / Cursor:** `.vscode/launch.json` and `.vscode/tasks.json` include demo, tests, and ruff tasks. Adjust the Python interpreter path to match your environment.
+| `llm.backend` | When to use it |
+|---------------|----------------|
+| **`openai_compatible`** (default) | Standard OpenAI-style `/v1` URL (Ollama, vLLM, many cloud APIs). |
+| **`ollama_native`** | Native Ollama options (e.g. disable “thinking” on some Qwen models). Requires `langchain-ollama`. |
 
 ---
 
@@ -243,14 +176,14 @@ Beginner-oriented testing notes (Chinese): **`TESTING_GUIDE_ZH.md`**.
 
 | Symptom | What to try |
 |---------|-------------|
-| `ModuleNotFoundError` | Install from `requirements-lock.txt` or `requirements.txt`; add `langchain-ollama` for `ollama_native`. |
-| `502` or connection errors to `localhost` | Use `http://127.0.0.1:11434/v1` in `llm.base_url` or bypass proxy for local addresses. |
-| Frequent `Retrying request` / timeouts | Set a larger positive `llm.request_timeout` in YAML, or remove it if too aggressive. |
-| Truncated TeX in terminal | Open the output file; the CLI only prints a preview. |
-| JSON parse warnings on Editor | Long sections: increase model context / `num_predict`, simplify prompts, or use a model that follows JSON more reliably. |
+| `ModuleNotFoundError` | Re-run install from `requirements-lock.txt` (and `langchain-ollama` if using `ollama_native`). |
+| Cannot connect to Ollama | Ensure `ollama serve` is running; try `http://127.0.0.1:11434/v1` as `base_url`; disable `ollama_healthcheck` if the server is not Ollama. |
+| Timeouts / very slow | Increase or clear `llm.request_timeout` in YAML. |
+| Truncated text in the terminal | Open the output `.tex` file; the terminal only shows a preview. |
+| JSON / editor warnings in the log | Very long sections: use a larger context window, a model that follows JSON reliably, or split sections. |
 
 ---
 
 ## Version
 
-`python run.py --version` should match `_version.py` and `pyproject.toml` `[project].version`; bump them together when releasing.
+Run `python run.py --version`. It should match `_version.py` and `pyproject.toml` when you release a new version.
