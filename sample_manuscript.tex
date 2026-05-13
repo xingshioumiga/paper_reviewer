@@ -1,0 +1,80 @@
+\section{Introduction}
+Scientific writing assistants are increasingly used to improve draft quality, but many tools still operate as one-shot editors with limited control over iterative refinement.
+This paper introduces a modular reviewer pipeline that alternates between issue detection, targeted edits, and quality scoring over multiple rounds.
+Compared with plain prompt-based rewriting, our method keeps explicit history and supports early stopping when no further improvement is observed.
+The core research question is whether lightweight orchestration can produce stable quality gains with low implementation complexity.
+
+\section{Related Work}
+Prior work on automated writing support includes grammar correction systems, style transfer models, and LLM-based revision agents.
+Grammar correction methods often optimize token-level fluency, while revision agents target discourse-level coherence and argument structure.
+Recent graph-based orchestration frameworks have shown strong flexibility in multi-step reasoning tasks.
+However, few studies provide practical engineering baselines that are easy to run locally and inspect end-to-end.
+
+\section{Method}
+Our framework is implemented as a directed graph with five main roles: initializer, reviewer, editor, critic, and aggregator.
+Given input LaTeX text, the initializer splits content by section markers and stores structured state.
+For each section, the reviewer emits issue objects containing fields such as section id, severity, and problem description.
+The editor applies deterministic edits based on these issues, and the critic outputs a scalar score in $[0,1]$.
+The aggregator updates current text, tracks best text, and records a complete modification history.
+
+\subsection{State Definition}
+The state includes immutable input, mutable current text, per-section slices, issue list, running score, best score, and stop counters.
+Formally, we maintain
+\[
+S_t = \{x_{orig}, x_t, \mathcal{Q}_t, h_t, b_t, i_t\},
+\]
+where $x_t$ is current draft, $\mathcal{Q}_t$ is issue set, $h_t$ is edit history, and $b_t$ stores the best-so-far artifact.
+
+\subsection{Routing Policy}
+Section routing follows:
+\[
+\text{if } idx < N \Rightarrow \text{reviewer}, \quad \text{else} \Rightarrow \text{iteration\_step}.
+\]
+Iteration routing follows:
+\[
+\text{if } iter \geq I_{max} \text{ or } no\_improve \geq K \Rightarrow \text{end}, \text{ else reviewer}.
+\]
+
+\section{Experimental Setup}
+We run all experiments in a local conda environment with fixed dependency versions to ensure reproducibility.
+Each run processes the same synthetic manuscript and reports iteration count, best score, and number of accepted edits.
+To control randomness in evaluation, we fix random seeds when needed and isolate deterministic checks in unit tests.
+
+\section{Results}
+Table~\ref{tab:main} summarizes representative outcomes across three runs.
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\hline
+Run & Iterations & Best Score & Accepted Edits \\
+\hline
+A & 2 & 0.89 & 6 \\
+B & 2 & 0.91 & 7 \\
+C & 3 & 0.93 & 8 \\
+\hline
+\end{tabular}
+\caption{Example iterative optimization outcomes.}
+\label{tab:main}
+\end{table}
+
+Qualitatively, revisions improve local clarity and reduce repetitive phrasing.
+Failure cases remain when issues require domain knowledge beyond sentence-level rewriting.
+
+\section{Ablation Study}
+We remove one component at a time to estimate contribution:
+\begin{itemize}
+\item Without critic: no reliable acceptance signal, quality fluctuates.
+\item Without history: debugging and rollback are difficult.
+\item Without section loop: edits become coarse and less controllable.
+\end{itemize}
+The full pipeline consistently provides the best trade-off between quality and interpretability.
+
+\section{Discussion}
+The framework is intentionally simple and should be viewed as an engineering baseline rather than a final product.
+Its modular design enables future upgrades, such as replacing mock reviewer outputs with LLM calls and adding semantic consistency checks.
+A practical limitation is that section splitting currently relies on a narrow LaTeX pattern and does not yet support all structural variants.
+
+\section{Conclusion}
+We presented a lightweight graph-based reviewer that supports iterative, section-aware text refinement.
+Despite its simplicity, the system demonstrates stable behavior, traceable decisions, and low setup overhead.
+Future work will include stronger scoring functions, richer edit operators, and benchmark evaluation on real manuscripts.

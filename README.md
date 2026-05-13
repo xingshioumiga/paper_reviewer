@@ -96,7 +96,7 @@ python run.py --version
 ## Use your own paper
 
 - Pass **`--input path\to\your.tex`** and **`--output path\to\out.tex`**, or set **`input_path` / `output_path`** in `config/local.yaml`.
-- Keep private drafts out of version control (for example add your filename to `.gitignore` if needed). The repo keeps **`sample_manuscript.tex`** only as a **demo**; your personal `private-draft.tex` is ignored by default.
+- Keep private drafts out of version control (for example add your filename to `.gitignore` if needed). The repo ships **`sample_manuscript.tex`** only as a **demo**; patterns like `draft*.tex` are gitignored so common local draft names are not committed by mistake.
 
 ---
 

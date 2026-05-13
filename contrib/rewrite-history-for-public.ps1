@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  使用 ``py -m git_filter_repo`` 从整条 Git 历史中删除常见敏感路径（.vscode、曾误提交的 local.yaml、private-draft.tex）。
+  使用 ``py -m git_filter_repo`` 从整条 Git 历史中删除常见敏感路径（.vscode、曾误提交的 local.yaml、``draft*.tex`` 等）。
 
 .DESCRIPTION
   运行前请备份仓库。重写后需 ``git push --force-with-lease``；他人需重新克隆。
@@ -42,7 +42,8 @@ $gfrArgs = @(
   "--invert-paths",
   "--path", ".vscode/",
   "--path", "config/local.yaml",
-  "--path", "private-draft.tex"
+  "--path", "private-draft.tex",
+  "--path", "sample_manuscript.tex"
 )
 
 if ($ReplaceTextFile) {

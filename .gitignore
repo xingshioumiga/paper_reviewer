@@ -20,8 +20,10 @@ config/local.yaml
 # Windows Explorer duplicate names (often personal drafts / exports)
 * - 副本.*
 
-# User manuscript (use sample_manuscript.tex in repo as sample only)
+# Personal / legacy manuscript filenames (do not publish)
 private-draft.tex
+sample_manuscript.tex
+draft*.tex
 
 # IDE settings (entire folder — never commit machine paths; see contrib/vscode/)
 .idea/
