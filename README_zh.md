@@ -96,7 +96,7 @@ python run.py --version
 ## 使用自己的论文
 
 - 使用命令行 **`--input`**、**`--output`**，或在 `config/local.yaml` 里设置 **`input_path` / `output_path`**。
-- 私人手稿勿纳入版本库（需要时把文件名加入 `.gitignore`）。仓库仅附带 **`sample_manuscript.tex`** 作为**演示**；`draft*.tex` 等模式已写入 `.gitignore`，避免误提交本地草稿文件名。
+- 私人手稿勿纳入版本库（需要时把文件名或通配规则写入 `.gitignore`）。仓库附带 **`sample_manuscript.tex`** 仅作**演示**；请自行在 `.gitignore` 中补充你不想提交的本地 `.tex` 规则。
 
 ---
 
