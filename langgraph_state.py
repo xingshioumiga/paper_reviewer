@@ -85,3 +85,11 @@ class GraphState(BaseModel):
     # 本 run 内 LLM 节点失败次数；run.py 据此非零退出，避免静默假成功。
     # LLM node failure count; run.py uses this for non-zero exit (no silent false success).
     llm_failure_count: int = 0
+
+    # --- Glossary（术语表；可选；默认关闭）/ optional abbreviation glossary (default off).
+    glossary_enabled: bool = False
+    # 人工种子与规范化后的 key（大写）→ 全称 / seed and normalized keys → expansions.
+    glossary_locked: dict[str, str] = Field(default_factory=dict)
+    glossary_provisional: dict[str, str] = Field(default_factory=dict)
+    # 外层 iteration==0 时已跑过术语抽取的 section id / section ids already processed by glossary LLM in outer iter 0.
+    glossary_extracted_section_ids: list[str] = Field(default_factory=list)

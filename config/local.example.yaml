@@ -23,6 +23,15 @@ log_level: INFO
 log_dir: logs
 ollama_healthcheck: true
 
+# Glossary (abbreviations): default enabled in built-in config; human seed + model merge on first outer iteration.
+# Set ``glossary.enabled: false`` to skip extra LLM calls. Copy contrib/private/glossary.seed.example.yaml to private/glossary.seed.yaml.
+glossary:
+  enabled: true
+  seed_path: private/glossary.seed.yaml
+  merged_path: private/glossary.merged.yaml
+  bootstrap_provisional_from_merged: true
+  persist_merged_after_merge: true
+
 llm:
   # Backend selection:
   # - "openai_compatible" (default): Standard OpenAI format, best for production/cloud APIs
@@ -31,6 +40,11 @@ llm:
 
   base_url: http://127.0.0.1:11434/v1
   api_key: ollama
+
+  # Optional: glossary extraction defaults to reviewer model; override e.g. smaller/faster model:
+  # glossary:
+  #   model: qwen2.5:14b
+  #   temperature: 0.0
 
   # ollama_native only: max output tokens per call (raise if editor JSON truncates). null = omit (model default).
   # num_predict: 32768

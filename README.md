@@ -6,12 +6,19 @@
 
 Chinese guide: **[README_zh.md](README_zh.md)**.
 
+## What’s new in **0.4.0** (major update)
+
+- **Glossary pipeline (enabled by default):** before each section’s reviewer, a **glossary** step can extract abbreviations into a merged table (**`locked`** from `private/glossary.seed.yaml` + model **`provisional`**). The same table is injected into **reviewer / editor / critic** prompts for consistent terminology. It runs **once per section on outer iteration 0** only. Set **`glossary.enabled: false`** in YAML to skip the extra LLM calls. See [`glossary_merge.py`](glossary_merge.py), **[contrib/private/README.md](contrib/private/README.md)**, and [`config/local.example.yaml`](config/local.example.yaml).
+- **Ollama resilience:** bounded **retries** for dropped HTTP streams and transient **502 / 503 / 504** on native Ollama calls; existing **`num_predict`** and JSON parse retry settings for long sections.
+- **Private runner docs:** expanded **[contrib/private/README.md](contrib/private/README.md)** (bat encoding, conda `Scripts\conda.exe`, long-run Ollama tips).
+
 ## What you get
 
 - Local or remote **OpenAI-compatible** APIs (e.g. Ollama) or optional **native Ollama** settings.
 - **`proofread`** (light, issue-driven) or **`rewrite`** (broader wording inside each section, without inventing results or breaking cites/refs/math).
 - Optional **second pass**: `rewrite` then **`proofread`** in one command.
 - A new **`.tex`** plus **timestamped logs** under `logs/` (by default).
+- **Glossary** (when enabled): human **`locked`** terms + model **`provisional`** merge; injected into downstream prompts.
 
 ## Requirements
 
@@ -65,6 +72,8 @@ Later: `conda env update -f environment.yml`. On **Windows**, without activating
 2. Edit **`config/local.yaml`**. For local Ollama, `api_key: ollama` is typical. For cloud keys, use **`config/*.private.yaml`** (see `.gitignore`) instead of committing keys.
 
 3. Set **`input_path`** / **`output_path`**, or pass **`--input`** / **`--output`**. The repo ships **`sample_manuscript.tex`** as a demo.
+
+4. **Glossary (default `enabled: true` in built-in config):** files live under **`private/`** (gitignored). Copy **[contrib/private/glossary.seed.example.yaml](contrib/private/glossary.seed.example.yaml)** to **`private/glossary.seed.yaml`** for manual **`locked:`** entries; **`private/glossary.merged.yaml`** is updated when **`persist_merged_after_merge`** is true. Set **`glossary.enabled: false`** to disable glossary LLM calls entirely.
 
 ## Run
 
@@ -132,9 +141,12 @@ Default **`config/local.yaml`**; override with **`--config`**.
 | `max_no_improve` | Per-section retries if score does not beat last accepted |
 | `log_level` / `log_dir` | Logging |
 | `ollama_healthcheck` | If `true`, probes Ollama `GET /api/tags` before run |
-| `llm` | `backend`, `base_url`, `api_key`, optional `request_timeout`, per-role `model` / `temperature`, and optional generation/parse tuning (see example YAML) |
+| `glossary` | `enabled`, `seed_path`, `merged_path`, `bootstrap_provisional_from_merged`, `persist_merged_after_merge` (see example YAML) |
+| `llm` | `backend`, `base_url`, `api_key`, optional `request_timeout`, per-role `model` / `temperature`, optional nested **`glossary`** (`model`, `temperature`) for the extract step, and generation/parse tuning (see example YAML) |
 
 See **`config/local.example.yaml`**. **Precedence:** CLI (where supported) > YAML > code defaults.
+
+**LLM graph order:** `init` → **`glossary`** → `reviewer` → `editor` → `critic` → `aggregator` → …
 
 ## CLI flags
 
@@ -177,4 +189,4 @@ python -m pytest tests/ -q
 
 ## Version
 
-`python run.py --version` should align with **`_version.py`** and **`pyproject.toml`** when you cut a release.
+Current release: **0.4.0**. `python run.py --version` should match **`_version.py`** and **`pyproject.toml`**.

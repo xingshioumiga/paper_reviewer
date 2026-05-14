@@ -9,6 +9,7 @@ from langgraph_nodes import (
     aggregator_node,
     critic_node,
     editor_node,
+    glossary_node_noop,
     has_more_sections,
     init_node,
     iteration_step,
@@ -23,6 +24,7 @@ builder = StateGraph(GraphState)
 
 # 注册节点 / register nodes
 builder.add_node("init", init_node)
+builder.add_node("glossary", glossary_node_noop)
 builder.add_node("reviewer", reviewer_node)
 builder.add_node("editor", editor_node)
 builder.add_node("critic", critic_node)
@@ -34,7 +36,8 @@ builder.add_node("iteration_step", iteration_step)
 builder.set_entry_point("init")
 
 # 主边：init → reviewer → … / main linear edges
-builder.add_edge("init", "reviewer")
+builder.add_edge("init", "glossary")
+builder.add_edge("glossary", "reviewer")
 builder.add_edge("reviewer", "editor")
 builder.add_edge("editor", "critic")
 builder.add_edge("critic", "aggregator")
@@ -45,7 +48,7 @@ builder.add_conditional_edges(
     "next_section",
     has_more_sections,
     {
-        "reviewer": "reviewer",
+        "glossary": "glossary",
         "iteration_step": "iteration_step"
     }
 )
@@ -55,7 +58,7 @@ builder.add_conditional_edges(
     "iteration_step",
     route_after_iteration,
     {
-        "reviewer": "reviewer",
+        "glossary": "glossary",
         "end": END
     }
 )

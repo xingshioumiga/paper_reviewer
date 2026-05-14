@@ -1,6 +1,6 @@
-"""LangGraph node functions: init → reviewer → editor → critic → aggregator → routing.
+"""LangGraph node functions: init → glossary → reviewer → editor → critic → aggregator → routing.
 
-节点流水线：初始化 → 审稿 → 改写 → 打分 → 汇总采纳/回滚 → 切换段落或外层轮次。
+节点流水线：初始化 → 术语表（可选）→ 审稿 → 改写 → 打分 → 汇总采纳/回滚 → 切换段落或外层轮次。
 Mock 节点用于快速验证；`*_llm` 节点通过 ``init_llms_from_config`` 使用配置文件中的 LLM。
 """
 
@@ -10,8 +10,10 @@ import random
 import re
 import sys
 import time
+from pathlib import Path
 from typing import Any, List, Optional, Type, TypeVar
 
+from glossary_merge import merge_glossary_candidates, render_glossary_block, save_merged_yaml
 from langgraph_state import GraphState, HistoryItem, Issue
 from paper_reviewer_tool import (
     normalize_fake_newlines_in_latex,
@@ -168,6 +170,21 @@ _EDITOR_OLLAMA_JSON_RETRY_HINT = (
 _NUM_PREDICT_UNSET = object()
 
 
+def _is_retryable_ollama_transport(exc: BaseException) -> bool:
+    """长流式 generate 时 Ollama/httpx 可能断连或短暂 502；可重试 / transient Ollama or proxy errors worth retrying."""
+    name = type(exc).__name__
+    mod = getattr(type(exc), "__module__", "") or ""
+    if "RemoteProtocolError" in name or "ReadTimeout" in name or "ConnectError" in name:
+        return True
+    if mod.startswith("httpx.") or mod.startswith("httpcore."):
+        if "Timeout" in name or "Protocol" in name or "Connect" in name:
+            return True
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int) and code in (502, 503, 504):
+        return True
+    return False
+
+
 # =========================
 # Ollama 原生 API 封装（如禁用 thinking）/ Ollama native API wrapper (e.g. disable thinking)
 # =========================
@@ -236,8 +253,29 @@ class OllamaStructuredLLM:
         hint = retry_hint if retry_hint is not None else _DEFAULT_OLLAMA_JSON_RETRY_HINT
         msgs: list[Any] = list(messages)
         last_err: BaseException | None = None
+        transport_attempts_max = 3
         for attempt in range(max_parse_attempts):
-            response = self.llm.invoke(msgs)
+            response: str | None = None
+            last_transport: BaseException | None = None
+            for tr in range(transport_attempts_max):
+                try:
+                    response = self.llm.invoke(msgs)
+                    last_transport = None
+                    break
+                except BaseException as e:
+                    last_transport = e
+                    if tr + 1 < transport_attempts_max and _is_retryable_ollama_transport(e):
+                        logging.getLogger(__name__).warning(
+                            "OllamaStructuredLLM transport retry %s/%s role=%s: %s",
+                            tr + 1,
+                            transport_attempts_max,
+                            self.role,
+                            e,
+                        )
+                        time.sleep(min(10.0, 2.0 ** tr))
+                        continue
+                    raise
+            assert response is not None
             try:
                 return self._parse_response(response, output_schema)
             except ValueError as e:
@@ -296,6 +334,36 @@ class EditorOutput(BaseModel):
 # Critic 一次性返回 score / critic returns scalar ``score``.
 class ScoreOutput(BaseModel):
     score: float = Field(description="0到1之间的浮点数评分，0.9表示完美，0.5表示无改进")
+
+
+# Glossary chunk extract / 术语表增量抽取.
+class GlossaryExtractEntry(BaseModel):
+    abbr: str = Field(description="缩写或简短记号，如 EV、HHG / short token such as EV, HHG")
+    expansion: str = Field(description="英文全称或简短释义，≤200 字符 / English gloss, under ~200 chars")
+    confidence: float = Field(default=0.6, ge=0.0, le=1.0, description="置信度 0–1 / confidence 0–1")
+
+
+class GlossaryExtractOutput(BaseModel):
+    entries: List[GlossaryExtractEntry] = Field(
+        default_factory=list,
+        description='JSON 键 entries：对象数组，每项含 abbr、expansion、confidence / key "entries": array of objects',
+    )
+
+
+GLOSSARY_SYSTEM = """你是学术 LaTeX 稿件的术语抽取助手。任务：从给定的一个章节片段中，抽取重要的缩写与领域专有名词及其英文释义。
+规则：
+- 只输出一个 JSON 对象，且仅含键 "entries"；entries 为数组，元素含 abbr、expansion、confidence（0 到 1）。
+- abbr 为短记号（如 EV、HHG），不要整句；expansion 为英文释义，单条不超过 200 字符。
+- 人类消息中「locked」术语不得给出与之矛盾的 expansion；若该缩写已在 locked 中，不要重复输出。
+- 不要臆造文中未出现的含义；不确定则 confidence 放低或省略该项。
+- 若无新术语可补充，返回 {"entries": []}。
+- 不要 Markdown 代码围栏；不要输出 JSON 以外的文字。"""
+
+_DEFAULT_GLOSSARY_JSON_RETRY_HINT = (
+    "上一版输出无法解析为合法 JSON。"
+    "请只输出一个 JSON 对象，键为 entries，值为数组；每项含 abbr、expansion、confidence。"
+    "字符串内双引号必须转义为 \\\"；不要用 Markdown 围栏。"
+)
 
 
 # =========================
@@ -396,14 +464,56 @@ class OllamaCriticChain(Runnable):
         return self.llm.invoke(messages, ScoreOutput, max_parse_attempts=self.max_parse_attempts)
 
 
+class OllamaGlossaryChain(Runnable):
+    """Ollama 术语抽取 Runnable；返回 ``GlossaryExtractOutput`` / Ollama glossary extraction runnable."""
+
+    def __init__(
+        self,
+        llm: OllamaStructuredLLM,
+        system_prompt: str,
+        max_parse_attempts: int = 3,
+    ) -> None:
+        self.llm = llm
+        self.system_prompt = system_prompt
+        self.max_parse_attempts = max(1, int(max_parse_attempts))
+
+    def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> GlossaryExtractOutput:
+        title = str(inputs.get("title", ""))
+        content = str(inputs.get("content", ""))
+        existing = str(inputs.get("existing_glossary", "(none)"))
+        human = (
+            "Current merged glossary (respect locked; do not propose conflicting expansions for locked keys):\n"
+            f"{existing}\n\nSection title:\n{title}\n\nLaTeX section body:\n{content}\n\n"
+            'Return only JSON: {{"entries": [...]}}.'
+        )
+        messages = [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=human),
+        ]
+        return self.llm.invoke(
+            messages,
+            GlossaryExtractOutput,
+            retry_hint=_DEFAULT_GLOSSARY_JSON_RETRY_HINT,
+            max_parse_attempts=self.max_parse_attempts,
+        )
+
+
 # 运行期由 init_llms_from_config 填充；import 时用 DEFAULT_CONFIG 预初始化一次。
 # Filled by init_llms_from_config; seeded once at import from DEFAULT_CONFIG.
 llm_ini_reviewer: ChatOpenAI
 llm_ini_editor: ChatOpenAI
 llm_ini_critic: ChatOpenAI
+llm_ini_glossary: ChatOpenAI | None = None
 llm_structured_reviewer: Any
 llm_strucured_editor: Any
 llm_structured_critic: Any
+llm_structured_glossary: Any = None
+
+# merged 术语表落盘路径（由 init_llms_from_config 根据 YAML 写入）/ merged glossary persist paths from YAML.
+_GLOSSARY_PERSIST: dict[str, Any] = {
+    "merged_path": "private/glossary.merged.yaml",
+    "persist": False,
+}
 
 
 def _resolved_num_predict(llm_cfg: dict[str, Any], role: dict[str, Any]) -> int | None:
@@ -431,8 +541,9 @@ def _resolved_json_parse_attempts(llm_cfg: dict[str, Any], role: dict[str, Any],
 def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
     """根据合并后的配置重建三个 ChatOpenAI 客户端及结构化链（应在 run.py 中再次调用以覆盖 YAML）。
     Rebuild reviewer/editor/critic clients and structured chains from merged config."""
-    global llm_ini_reviewer, llm_ini_editor, llm_ini_critic
-    global llm_structured_reviewer, llm_strucured_editor, llm_structured_critic
+    global llm_ini_reviewer, llm_ini_editor, llm_ini_critic, llm_ini_glossary
+    global llm_structured_reviewer, llm_strucured_editor, llm_structured_critic, llm_structured_glossary
+    global _GLOSSARY_PERSIST
 
     merged = merge_config(DEFAULT_CONFIG, config or {})
     # 规范化编辑模式并刷新全局提示表 / canonicalize mode and refresh global prompt table.
@@ -451,6 +562,10 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
     rv = _role("reviewer")
     ed = _role("editor")
     cr = _role("critic")
+    gloss_raw = llm_cfg.get("glossary")
+    gloss_d = gloss_raw if isinstance(gloss_raw, dict) else {}
+    gloss_model = str(gloss_d.get("model") or rv.get("model", "qwen2.5:14b"))
+    gloss_temp = float(gloss_d.get("temperature", 0.0))
 
     timeout_raw = llm_cfg.get("request_timeout")
     request_timeout: float | None = None
@@ -548,6 +663,27 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             max_parse_attempts=attempts_cr,
         )
 
+        np_gl = _resolved_num_predict(llm_cfg, gloss_d)
+        attempts_gl = _resolved_json_parse_attempts(
+            llm_cfg,
+            gloss_d,
+            int(DEFAULT_CONFIG["llm"].get("json_parse_retries", 3)),
+        )
+        ollama_glossary = OllamaStructuredLLM(
+            model=gloss_model,
+            base_url=base_url,
+            temperature=gloss_temp,
+            disable_thinking=True,
+            role="glossary",
+            num_predict=np_gl,
+        )
+        llm_structured_glossary = OllamaGlossaryChain(
+            ollama_glossary,
+            GLOSSARY_SYSTEM,
+            max_parse_attempts=attempts_gl,
+        )
+        llm_ini_glossary = None
+
     else:
         # OpenAI 兼容路径（ChatOpenAI + structured_output）/ OpenAI-compatible path.
         def _chat_kw(temperature: float, model: str, role: str) -> dict[str, Any]:
@@ -579,6 +715,30 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
         llm_structured_reviewer = llm_ini_reviewer.with_structured_output(ReviewOutput)
         llm_strucured_editor = llm_ini_editor.with_structured_output(EditorOutput)
         llm_structured_critic = llm_ini_critic.with_structured_output(ScoreOutput)
+
+        llm_ini_glossary = ChatOpenAI(
+            **_chat_kw(gloss_temp, gloss_model, "glossary"),
+        )
+        gloss_sys_esc = _escape_langchain_template_literals(GLOSSARY_SYSTEM)
+        prompt_glossary = ChatPromptTemplate.from_messages(
+            [
+                ("system", gloss_sys_esc),
+                (
+                    "human",
+                    "Current merged glossary:\n{existing_glossary}\n\n"
+                    "Section title:\n{title}\n\nLaTeX section body:\n{content}",
+                ),
+            ]
+        )
+        llm_structured_glossary = prompt_glossary | llm_ini_glossary.with_structured_output(
+            GlossaryExtractOutput
+        )
+
+    gc = merged.get("glossary") or {}
+    _GLOSSARY_PERSIST = {
+        "merged_path": str(gc.get("merged_path", "private/glossary.merged.yaml")),
+        "persist": bool(gc.get("persist_merged_after_merge", True)),
+    }
 
     # 记录最终选用的模型与超时 / log resolved models and timeout.
     logging.getLogger(__name__).info(
@@ -684,6 +844,98 @@ def init_node(state: GraphState) -> GraphState:
     return state
 
 
+def glossary_node_noop(state: GraphState) -> GraphState:
+    """Mock 图占位：与 LLM 图拓扑对齐，不修改 state / no-op for mock graph topology parity."""
+    return state
+
+
+def _glossary_appendix(state: GraphState) -> str:
+    """注入审稿/编辑 human 的术语表后缀 / suffix for reviewer/editor human prompts."""
+    if not state.glossary_enabled:
+        return ""
+    block = render_glossary_block(state.glossary_locked, state.glossary_provisional)
+    return f"\n\n{block}" if block else ""
+
+
+def _critic_glossary_note(state: GraphState) -> str:
+    """注入 critic：术语一致性提示 / critic note for glossary consistency."""
+    if not state.glossary_enabled:
+        return ""
+    block = render_glossary_block(state.glossary_locked, state.glossary_provisional)
+    if not block:
+        return ""
+    return (
+        "\n\n术语表一致性：若修改后正文与上述术语表中 locked 或已有 provisional 含义明显矛盾，"
+        "应给显著更低分。\n\n" + block
+    )
+
+
+def glossary_node_llm(state: GraphState) -> GraphState:
+    """首轮外层迭代、每节一次：模型抽取术语并 merge 进 provisional / extract+merge once per section on outer iter 0."""
+    if not state.glossary_enabled:
+        return state
+    if state.iteration > 0:
+        return state
+    if not state.sections:
+        return state
+    section = state.sections[state.current_section_index]
+    if section.id in state.glossary_extracted_section_ids:
+        return state
+
+    existing = render_glossary_block(state.glossary_locked, state.glossary_provisional) or "(none yet)"
+
+    if llm_structured_glossary is None:
+        logger.warning("glossary_node_llm: llm_structured_glossary is None, skipping extract")
+        state.glossary_extracted_section_ids.append(section.id)
+        return state
+
+    try:
+        logger.info(
+            "glossary_node_llm: section_id=%s iteration=%s invoking LLM",
+            section.id,
+            state.iteration,
+        )
+        _flush_log_handlers()
+        out = llm_structured_glossary.invoke(
+            {
+                "title": section.title,
+                "content": section.content,
+                "existing_glossary": existing,
+            }
+        )
+        raw_entries: list[dict[str, Any]] = []
+        for e in out.entries:
+            if hasattr(e, "model_dump"):
+                raw_entries.append(e.model_dump())
+            else:
+                raw_entries.append(e.dict())  # type: ignore[call-arg]
+        new_prov, logs = merge_glossary_candidates(
+            state.glossary_locked,
+            state.glossary_provisional,
+            raw_entries,
+        )
+        for line in logs:
+            logger.info("glossary_node_llm: %s", line)
+        state.glossary_provisional = new_prov
+    except Exception as e:
+        state.llm_failure_count += 1
+        logger.error("glossary_node_llm failed: %s", e, exc_info=True)
+
+    state.glossary_extracted_section_ids.append(section.id)
+
+    if _GLOSSARY_PERSIST.get("persist"):
+        try:
+            save_merged_yaml(
+                Path(_GLOSSARY_PERSIST["merged_path"]),
+                state.glossary_locked,
+                state.glossary_provisional,
+            )
+        except Exception as e:
+            logger.warning("glossary persist failed: %s", e)
+
+    return state
+
+
 # --- 2 reviewer (mock)：占位 issues，离线测图 / stub issues for offline graph tests ---
 def reviewer_node(state: GraphState) -> GraphState:
     """Mock 审稿：写入固定占位 issues / mock reviewer: attach stub issues."""
@@ -719,7 +971,7 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
     sys_r = _escape_langchain_template_literals(system_prompt_for("reviewer", state.edit_mode))
     prompt = ChatPromptTemplate.from_messages([
         ("system", sys_r),
-        ("human", "标题: {title}\n\n内容:\n{content}")
+        ("human", "标题: {title}\n\n内容:\n{content}{glossary_appendix}"),
     ])
 
     # 组装并执行 LCEL 链 / build and run LCEL chain.
@@ -735,10 +987,13 @@ def reviewer_node_llm(state: GraphState) -> GraphState:
             len(section.content),
         )
         _flush_log_handlers()
-        response = chain.invoke({
-            "title": section.title,
-            "content": section.content
-        })
+        response = chain.invoke(
+            {
+                "title": section.title,
+                "content": section.content,
+                "glossary_appendix": _glossary_appendix(state),
+            }
+        )
         
         # 写入 issues，并统一 section_id / attach issues with correct ``section_id``.
         issues = []
@@ -836,15 +1091,17 @@ def editor_node_llm(state: GraphState):
     sys_e = _escape_langchain_template_literals(system_prompt_for("editor", state.edit_mode))
     # 构建 ChatPromptTemplate / build ChatPromptTemplate.
     prompt = ChatPromptTemplate.from_messages([
-    ("system", sys_e),
-    ("human", (
-        "【原始段落】\n"
-        "{content}\n\n"
-        "【需要解决的问题】\n"
-        "{issues}\n\n"
-        "请输出修改后的 LaTeX 段落："
-    ))
-])
+        ("system", sys_e),
+        (
+            "human",
+            "【原始段落】\n"
+            "{content}\n\n"
+            "【需要解决的问题】\n"
+            "{issues}\n"
+            "{glossary_appendix}\n"
+            "请输出修改后的 LaTeX 段落：",
+        ),
+    ])
 
     chain = prompt | llm_strucured_editor  # 可选 StrOutputParser / optional StrOutputParser
 
@@ -858,10 +1115,13 @@ def editor_node_llm(state: GraphState):
             len(section.content),
         )
         _flush_log_handlers()
-        refined_content = chain.invoke({
-            "content": section.content,
-            "issues": issues_text
-        })
+        refined_content = chain.invoke(
+            {
+                "content": section.content,
+                "issues": issues_text,
+                "glossary_appendix": _glossary_appendix(state),
+            }
+        )
         
         # 去掉 Markdown 围栏等噪声 / strip markdown fences and noise.
         refined_content = refined_content.refined_latex.strip()
@@ -950,10 +1210,12 @@ def critic_node_llm(state: GraphState) -> GraphState:
 
     sys_c = _escape_langchain_template_literals(system_prompt_for("critic", state.edit_mode))
     # 构建 ChatPromptTemplate / build ChatPromptTemplate.
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", sys_c),
-        ("human", "修改前: {before}\n\n修改后: {after}")
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", sys_c),
+            ("human", "修改前: {before}\n\n修改后: {after}{glossary_note}"),
+        ]
+    )
 
     chain = prompt | llm_structured_critic  # LCEL：prompt → structured critic / LCEL: prompt → structured critic.
 
@@ -967,10 +1229,13 @@ def critic_node_llm(state: GraphState) -> GraphState:
             len(last_history.after),
         )
         _flush_log_handlers()
-        result = chain.invoke({
-            "before": last_history.before,
-            "after": last_history.after
-        })
+        result = chain.invoke(
+            {
+                "before": last_history.before,
+                "after": last_history.after,
+                "glossary_note": _critic_glossary_note(state),
+            }
+        )
         score = result.score
     except Exception as e:
         state.llm_failure_count += 1
@@ -1078,10 +1343,10 @@ def next_section(state: GraphState) -> GraphState:
 
 
 def has_more_sections(state: GraphState) -> str:
-    """路由：还有节 → ``reviewer``；否则 ``iteration_step`` / route to ``reviewer`` or ``iteration_step``."""
+    """路由：还有节 → ``glossary``；否则 ``iteration_step`` / route to ``glossary`` or ``iteration_step``."""
     state.current_section_index = _next_active_section_index(state, state.current_section_index)
     if state.current_section_index < len(state.sections):
-        return "reviewer"
+        return "glossary"
     else:
         return "iteration_step"
 
@@ -1108,11 +1373,11 @@ def iteration_step(state: GraphState) -> GraphState:
 
 
 def route_after_iteration(state: GraphState) -> str:
-    """外层路由：达上限、无全文改进或无活跃节 → ``end``；否则 ``reviewer`` / outer route: ``end`` or ``reviewer``."""
+    """外层路由：达上限、无全文改进或无活跃节 → ``end``；否则 ``glossary`` / outer route: ``end`` or ``glossary``."""
     if state.iteration >= state.max_iterations:
         return "end"
     if state.stop_due_to_no_document_improve:
         return "end"
     if state.current_section_index >= len(state.sections):
         return "end"
-    return "reviewer"
+    return "glossary"

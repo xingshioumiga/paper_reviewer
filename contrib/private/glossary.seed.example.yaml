@@ -1,0 +1,7 @@
+# Copy to repo-root ``private/glossary.seed.yaml`` (gitignored). Locked entries are never overwritten by model merge.
+# 复制到仓库根 ``private/glossary.seed.yaml``（gitignore）。locked 项不会被模型合并覆盖。
+
+locked:
+  EV: ellipticity-varying
+  EFPG: Extreme Faraday Effect polarization gate
+  # CSE: Coherent Synchrotron Emission   # uncomment and adjust to your paper

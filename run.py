@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from _version import __version__
+from glossary_merge import load_initial_glossary_state
 from langgraph_nodes import init_llms_from_config, section_score_summary
 from langgraph_state import GraphState
 from prompt_modes import normalize_edit_mode
@@ -135,12 +136,27 @@ def main() -> None:
 
     original_tex = input_file.read_text(encoding="utf-8")
 
+    gcfg = config.get("glossary") or {}
+    gloss_enabled = bool(gcfg.get("enabled", False))
+    gloss_locked: dict[str, str] = {}
+    gloss_provisional: dict[str, str] = {}
+    if gloss_enabled:
+        seed_path = Path(str(gcfg.get("seed_path", "private/glossary.seed.yaml")))
+        merged_path = Path(str(gcfg.get("merged_path", "private/glossary.merged.yaml")))
+        bootstrap = bool(gcfg.get("bootstrap_provisional_from_merged", True))
+        gloss_locked, gloss_provisional = load_initial_glossary_state(
+            seed_path, merged_path, bootstrap
+        )
+
     # ===== 初始化 state / build initial graph state =====
     initial_state = GraphState(
         original_tex=original_tex,
         max_iterations=max_iterations,
         max_no_improve=max_no_improve,
         edit_mode=primary_mode,
+        glossary_enabled=gloss_enabled,
+        glossary_locked=gloss_locked,
+        glossary_provisional=gloss_provisional,
     )
 
     logger.info(
@@ -161,17 +177,18 @@ def main() -> None:
     # =========================
     recursion_limit = 100
     result = graph.invoke(initial_state, {"recursion_limit": recursion_limit})
-    final_state = _state_from_graph_result(result)
+    first_final = _state_from_graph_result(result)
+    final_state = first_final
     total_failures = final_state.llm_failure_count
     editor_skipped_all = list(final_state.editor_skipped_section_ids)
 
     do_second = bool(config.get("post_proofread_after_rewrite")) and primary_mode == "rewrite"
     if do_second:
         assembled = assemble_output_tex(
-            final_state.document_prefix,
-            final_state.best_tex,
-            final_state.current_tex,
-            final_state.sections,
+            first_final.document_prefix,
+            first_final.best_tex,
+            first_final.current_tex,
+            first_final.sections,
         )
         logger.info(
             "post-proofread: starting second pass (proofread), max_iterations=%s",
@@ -186,11 +203,17 @@ def main() -> None:
             max_iterations=int(config.get("post_proofread_max_iterations", 1)),
             max_no_improve=max_no_improve,
             edit_mode="proofread",
+            glossary_enabled=first_final.glossary_enabled,
+            glossary_locked=dict(first_final.glossary_locked),
+            glossary_provisional=dict(first_final.glossary_provisional),
+            glossary_extracted_section_ids=[],
         )
         result2 = graph.invoke(state2, {"recursion_limit": recursion_limit})
         final_state = _state_from_graph_result(result2)
-        total_failures += final_state.llm_failure_count
-        editor_skipped_all = sorted(set(editor_skipped_all + list(final_state.editor_skipped_section_ids)))
+        total_failures = first_final.llm_failure_count + final_state.llm_failure_count
+        editor_skipped_all = sorted(
+            set(first_final.editor_skipped_section_ids) | set(final_state.editor_skipped_section_ids)
+        )
 
     # =========================
     # 输出统计 / run summary to console

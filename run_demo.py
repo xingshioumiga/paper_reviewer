@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from LangGraph_loop import graph
+from glossary_merge import load_initial_glossary_state
 from langgraph_nodes import section_score_summary
 from langgraph_state import GraphState
 from paper_reviewer_tool import assemble_output_tex
@@ -67,11 +68,26 @@ def main() -> None:
         raise FileNotFoundError(f"Test file not found: {test_file}")
 
     original_tex = test_file.read_text(encoding="utf-8")
+    gcfg = config.get("glossary") or {}
+    gloss_enabled = bool(gcfg.get("enabled", False))
+    gloss_locked: dict[str, str] = {}
+    gloss_provisional: dict[str, str] = {}
+    if gloss_enabled:
+        seed_path = Path(str(gcfg.get("seed_path", "private/glossary.seed.yaml")))
+        merged_path = Path(str(gcfg.get("merged_path", "private/glossary.merged.yaml")))
+        bootstrap = bool(gcfg.get("bootstrap_provisional_from_merged", True))
+        gloss_locked, gloss_provisional = load_initial_glossary_state(
+            seed_path, merged_path, bootstrap
+        )
+
     initial_state = GraphState(
         original_tex=original_tex,
         max_iterations=max_iterations,
         max_no_improve=max_no_improve,
         edit_mode=str(config["mode"]),
+        glossary_enabled=gloss_enabled,
+        glossary_locked=gloss_locked,
+        glossary_provisional=gloss_provisional,
     )
     logger.info(
         "run demo start: mode=%s input=%s output=%s max_iterations=%s max_no_improve=%s log_file=%s",
@@ -82,7 +98,7 @@ def main() -> None:
         max_no_improve,
         log_file,
     )
-    result = graph.invoke(initial_state)
+    result = graph.invoke(initial_state, {"recursion_limit": 100})
 
     # LangGraph 可能返回 dict 或模型实例 / LangGraph may return dict-like state or a model instance.
     if isinstance(result, dict):

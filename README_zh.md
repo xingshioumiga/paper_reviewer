@@ -6,12 +6,19 @@
 
 英文说明：**[README.md](README.md)**（与本文结构、命令一致）。
 
+## 0.4.0 大更新摘要
+
+- **术语表 Glossary（内置默认开启）：** 每个 `\section` 在审稿前可增加一步 **glossary**，把缩写抽成合并表（**`locked`** 来自 `private/glossary.seed.yaml`，**`provisional`** 由模型增量写入）。同一张表会注入 **reviewer / editor / critic** 的提示，减少前后文乱改缩写。仅在**外层第 0 轮**、**每节各抽一次**。若不想多耗 LLM，在 YAML 设 **`glossary.enabled: false`**。实现见 [`glossary_merge.py`](glossary_merge.py)、**[contrib/private/README.md](contrib/private/README.md)**、[`config/local.example.yaml`](config/local.example.yaml)。
+- **Ollama 稳定性：** 对断流、**502/503/504** 等传输错误做**有限次重试**；仍可调 **`num_predict`**、JSON 解析重试等应对长节。
+- **私稿运行说明：** **[contrib/private/README.md](contrib/private/README.md)** 补充 bat 编码、conda 路径、长文 Ollama 报错处理等。
+
 ## 能做什么
 
 - 对接本机或远端的 **OpenAI 兼容**接口（如 Ollama），或选用 **ollama_native** 走原生参数。
 - **`proofread`**：以审稿问题为牵引的**轻量、安全**修改；**`rewrite`**：单节内更大范围润色，**不编造结论**、**不破坏**引用、标签、交叉引用与数学环境。
 - 可选：**`rewrite` 后再跑一轮 `proofread`**（同一条命令）。
 - 生成新的 **`.tex`**，并在默认 **`logs/`** 下写**带时间戳日志**。
+- **Glossary（开启时）：** 人工 **`locked`** + 模型 **`provisional`** 合并，并注入后续提示。
 
 ## 环境要求
 
@@ -65,6 +72,8 @@ conda activate <environment.yml 中的 name>
 2. 编辑 **`config/local.yaml`**。本机 Ollama 常用 `api_key: ollama`；云端 Key 请放 **`config/*.private.yaml`**（见 `.gitignore`），不要写进会被提交的仓库文件。
 
 3. 配置 **`input_path` / `output_path`**，或使用命令行 **`--input` / `--output`**。示例稿为 **`sample_manuscript.tex`**。
+
+4. **Glossary（内置配置默认 `enabled: true`）：** 文件在 **`private/`**（gitignore）。可将 **[contrib/private/glossary.seed.example.yaml](contrib/private/glossary.seed.example.yaml)** 复制为 **`private/glossary.seed.yaml`** 填写 **`locked:`**；**`private/glossary.merged.yaml`** 在 **`persist_merged_after_merge: true`** 时会更新。不需要术语表时在 YAML 设 **`glossary.enabled: false`**。
 
 ## 运行示例
 
@@ -132,9 +141,12 @@ python run.py --version
 | `max_no_improve` | 单节未超过上次采纳分时的重试上限 |
 | `log_level` / `log_dir` | 日志级别与目录 |
 | `ollama_healthcheck` | 为 `true` 时启动前请求 Ollama `GET /api/tags` |
-| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature`，以及可选的生成与解析重试相关项（见示例 YAML） |
+| `glossary` | `enabled`、`seed_path`、`merged_path`、`bootstrap_provisional_from_merged`、`persist_merged_after_merge`（见示例 YAML） |
+| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature`，可选嵌套 **`glossary`**（`model`、`temperature`）专用于抽取步，以及生成与解析重试等（见示例 YAML） |
 
 更完整示例见 **`config/local.example.yaml`**。**优先级：** 命令行（支持的项）> YAML > 内置默认值。
+
+**LLM 图顺序：** `init` → **`glossary`** → `reviewer` → `editor` → `critic` → `aggregator` → …
 
 ## 常用命令行参数
 
@@ -177,4 +189,4 @@ python -m pytest tests/ -q
 
 ## 版本
 
-执行 `python run.py --version`，发版时请与 **`_version.py`**、**`pyproject.toml`** 保持一致。
+当前发布版本：**0.4.0**。执行 `python run.py --version`，应与 **`_version.py`**、**`pyproject.toml`** 一致。

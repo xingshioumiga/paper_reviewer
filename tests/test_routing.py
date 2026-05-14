@@ -8,7 +8,7 @@ def test_has_more_sections_routes_to_reviewer_then_iteration_step():
     state = GraphState(original_tex="\\section{A}\ntext")
     state.sections = split_into_sections(state.original_tex)
     state.current_section_index = 0
-    assert has_more_sections(state) == "reviewer"
+    assert has_more_sections(state) == "glossary"
 
     state.current_section_index = len(state.sections)
     assert has_more_sections(state) == "iteration_step"
@@ -34,7 +34,7 @@ def test_route_after_iteration_continues_when_limits_not_reached():
     )
     state.iteration = 1
     state.sections = split_into_sections(state.original_tex)
-    assert route_after_iteration(state) == "reviewer"
+    assert route_after_iteration(state) == "glossary"
 
 
 def test_next_section_skips_sections_that_reached_no_improve_limit():
@@ -49,7 +49,7 @@ def test_next_section_skips_sections_that_reached_no_improve_limit():
     result = next_section(state)
 
     assert result.current_section_index == 2
-    assert has_more_sections(result) == "reviewer"
+    assert has_more_sections(result) == "glossary"
 
 
 def test_iteration_step_stops_when_no_section_was_accepted_in_round():

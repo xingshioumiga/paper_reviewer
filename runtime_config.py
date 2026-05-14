@@ -31,6 +31,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 为 true 且 mode 为 rewrite 时 run.py 会再跑一轮 proofread（额外费用）/ second proofread pass after rewrite (extra LLM cost).
     "post_proofread_after_rewrite": False,
     "post_proofread_max_iterations": 1,
+    # 本地术语表：种子 + 首轮按节模型增量；见 glossary_merge 与 README / local glossary; see glossary_merge and README.
+    "glossary": {
+        "enabled": True,
+        "seed_path": "private/glossary.seed.yaml",
+        "merged_path": "private/glossary.merged.yaml",
+        "bootstrap_provisional_from_merged": True,
+        "persist_merged_after_merge": True,
+    },
     "llm": {
         "base_url": "http://localhost:11434/v1",
         "api_key": "ollama",
