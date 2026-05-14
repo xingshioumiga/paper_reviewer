@@ -2,34 +2,74 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Install Dependencies",
+      "label": "Install Dependencies (conda: AIagent1)",
       "type": "shell",
-      "command": "python",
-      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+      "windows": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pip", "install", "-r", "requirements.txt"]
+      },
+      "linux": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pip", "install", "-r", "requirements.txt"]
+      },
+      "osx": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pip", "install", "-r", "requirements.txt"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
-      "label": "Run Demo",
+      "label": "Run Demo (conda: AIagent1)",
       "type": "shell",
-      "command": "python",
-      "args": ["run_demo.py"],
+      "windows": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "run_demo.py"]
+      },
+      "linux": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "run_demo.py"]
+      },
+      "osx": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "run_demo.py"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
-      "label": "Run Tests",
+      "label": "Run Tests (conda: AIagent1)",
       "type": "shell",
-      "command": "python",
-      "args": ["-m", "pytest", "-q"],
+      "windows": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pytest", "-q"]
+      },
+      "linux": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pytest", "-q"]
+      },
+      "osx": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "pytest", "-q"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
-      "label": "Lint (ruff)",
+      "label": "Lint (ruff, conda: AIagent1)",
       "type": "shell",
-      "command": "python",
-      "args": ["-m", "ruff", "check", "."],
+      "windows": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "ruff", "check", "."]
+      },
+      "linux": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "ruff", "check", "."]
+      },
+      "osx": {
+        "command": "conda",
+        "args": ["run", "-n", "AIagent1", "python", "-m", "ruff", "check", "."]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }

@@ -1,0 +1,17 @@
+# Conda 环境定义：仅环境名 + 依赖，不含本机路径 / Conda env: name + deps only; no machine paths.
+# 使用方式 / Usage:
+#   conda env create -f environment.yml     # 新建名为 AIagent1 的环境
+#   conda env update -f environment.yml     # 已有同名环境时更新依赖
+#   conda activate AIagent1
+#
+# 若你已有同名环境且不想覆盖，可本地复制本文件改名后改 ``name:``（该副本建议加入 .gitignore）/ If you already use the name locally, copy and rename ``name`` (keep copy gitignored).
+
+name: AIagent1
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10,<3.13
+  - pip
+  - pip:
+      - -r file:requirements.txt

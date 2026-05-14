@@ -28,6 +28,9 @@ draft.local.tex
 .idea/
 .vscode/
 
+# Private runner：仅仓库根下 ``private/``（勿用无斜杠 ``private/``，否则会误忽略 ``contrib/private/``）/ only root ``private/``; unanchored ``private/`` would ignore ``contrib/private/``.
+/private/
+
 # Test and tooling caches
 .pytest_cache/
 .mypy_cache/

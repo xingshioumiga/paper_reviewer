@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 from langgraph_nodes import init_llms_from_config
-from langgraph_state import GraphState
+from langgraph_state import GraphState, Issue, Section
 from prompt_modes import build_prompt_bundle, normalize_edit_mode
 from runtime_config import DEFAULT_CONFIG, load_merged_config, merge_config
 
@@ -77,15 +77,15 @@ def test_init_llms_refreshes_prompt_bundle_for_native_backend(tmp_path: Path, mo
             pass
 
     class FakeReviewer:
-        def __init__(self, llm, system_prompt: str):
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
             self.system_prompt = system_prompt
 
     class FakeEditor:
-        def __init__(self, llm, system_prompt: str):
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
             self.system_prompt = system_prompt
 
     class FakeCritic:
-        def __init__(self, llm, system_prompt: str):
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
             self.system_prompt = system_prompt
 
     monkeypatch.setattr("langgraph_nodes.OllamaStructuredLLM", FakeStructured)
@@ -97,5 +97,83 @@ def test_init_llms_refreshes_prompt_bundle_for_native_backend(tmp_path: Path, mo
         init_llms_from_config(merged)
         assert "发展性" in ln.llm_structured_reviewer.system_prompt or "结构" in ln.llm_structured_reviewer.system_prompt
         assert "重组" in ln.llm_strucured_editor.system_prompt or "LaTeX" in ln.llm_strucured_editor.system_prompt
+    finally:
+        ln.init_llms_from_config({})
+
+
+def test_editor_node_llm_failure_skips_section_and_aligns_history(monkeypatch) -> None:
+    """Editor 异常时占位 history、跳过节、不计 llm_failure / editor failure: history placeholder, skip section, no llm_failure bump."""
+    import langgraph_nodes as ln
+    from langchain_core.runnables import RunnableLambda
+
+    def _boom_editor(_inputs):
+        raise ValueError("no json")
+
+    # ``prompt | rhs`` 要求 rhs 为 Runnable / pipe requires a Runnable, not a plain object.
+    monkeypatch.setattr(ln, "llm_strucured_editor", RunnableLambda(_boom_editor))
+    s = GraphState(
+        original_tex="",
+        sections=[Section(id="sec_0", title="T", content="body", level=1)],
+        current_section_index=0,
+        issues=[Issue(section_id="sec_0", problem="x", severity="low")],
+    )
+    try:
+        out = ln.editor_node_llm(s)
+        assert out.llm_failure_count == 0
+        assert out.skipped_section_ids == ["sec_0"]
+        assert out.editor_skipped_section_ids == ["sec_0"]
+        assert len(out.history) == 1
+        assert out.history[0].section_id == "sec_0"
+        assert out.history[0].before == out.history[0].after == "body"
+    finally:
+        ln.init_llms_from_config({})
+
+
+def test_init_llms_ollama_resolves_num_predict(tmp_path: Path, monkeypatch) -> None:
+    """ollama_native：全局与角色 ``num_predict`` 解析到 ``OllamaStructuredLLM`` / num_predict wiring for native backend."""
+    import langgraph_nodes as ln
+
+    monkeypatch.setattr(ln, "_OLLAMA_AVAILABLE", True)
+    seen: list[dict[str, object]] = []
+
+    class FakeStructured:
+        def __init__(self, **kwargs):
+            seen.append(dict(kwargs))
+
+    class FakeReviewer:
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
+            self.system_prompt = system_prompt
+
+    class FakeEditor:
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
+            self.system_prompt = system_prompt
+
+    class FakeCritic:
+        def __init__(self, llm, system_prompt: str, max_parse_attempts: int = 3):
+            self.system_prompt = system_prompt
+
+    monkeypatch.setattr(ln, "OllamaStructuredLLM", FakeStructured)
+    monkeypatch.setattr(ln, "OllamaReviewerChain", FakeReviewer)
+    monkeypatch.setattr(ln, "OllamaEditorChain", FakeEditor)
+    monkeypatch.setattr(ln, "OllamaCriticChain", FakeCritic)
+
+    cfg = tmp_path / "np.yaml"
+    cfg.write_text(
+        "ollama_healthcheck: false\n"
+        "mode: proofread\n"
+        "llm:\n"
+        "  backend: ollama_native\n"
+        "  num_predict: 11111\n"
+        "  base_url: http://127.0.0.1:11434/v1\n"
+        "  editor:\n"
+        "    num_predict: null\n",
+        encoding="utf-8",
+    )
+    merged = load_merged_config(cfg)
+    try:
+        ln.init_llms_from_config(merged)
+        assert seen[0]["num_predict"] == 11111
+        assert seen[1]["num_predict"] is None
+        assert seen[2]["num_predict"] == 11111
     finally:
         ln.init_llms_from_config({})

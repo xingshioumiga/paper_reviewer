@@ -163,6 +163,7 @@ def main() -> None:
     result = graph.invoke(initial_state, {"recursion_limit": recursion_limit})
     final_state = _state_from_graph_result(result)
     total_failures = final_state.llm_failure_count
+    editor_skipped_all = list(final_state.editor_skipped_section_ids)
 
     do_second = bool(config.get("post_proofread_after_rewrite")) and primary_mode == "rewrite"
     if do_second:
@@ -189,6 +190,7 @@ def main() -> None:
         result2 = graph.invoke(state2, {"recursion_limit": recursion_limit})
         final_state = _state_from_graph_result(result2)
         total_failures += final_state.llm_failure_count
+        editor_skipped_all = sorted(set(editor_skipped_all + list(final_state.editor_skipped_section_ids)))
 
     # =========================
     # 输出统计 / run summary to console
@@ -218,17 +220,24 @@ def main() -> None:
     output_file.write_text(output_tex, encoding="utf-8")
 
     logger.info(
-        "run complete: iterations=%s history=%s elapsed=%.2fs output=%s llm_failures=%s",
+        "run complete: iterations=%s history=%s elapsed=%.2fs output=%s llm_failures=%s editor_skipped_sections=%s",
         final_state.iteration,
         len(final_state.history),
         time.perf_counter() - started_at,
         output_file.resolve(),
         total_failures,
+        editor_skipped_all,
     )
 
     print(f"Saved output to: {output_file.resolve()}")
     print(f"Log file: {log_file.resolve()}")
     print()
+
+    if editor_skipped_all:
+        skip_msg = f"SECTIONS_SKIPPED_BY_EDITOR: {editor_skipped_all}"
+        logger.warning(skip_msg)
+        print(skip_msg)
+        print()
 
     print("=== Output TeX Preview (first 1200 chars) ===")
     print(output_tex[:1200])

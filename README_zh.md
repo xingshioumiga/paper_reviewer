@@ -2,28 +2,22 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**paper-reviewer** 用于按 LaTeX 中的 **`\section` / `\subsection`** 逐节润色稿件：审稿模型列出问题，编辑模型给出修改后的 LaTeX，评分模型打分，工具仅在**分数优于该节上一次采纳结果**时**采纳**修改，否则对该节**回滚**。
+**paper-reviewer** 是基于 **LangGraph** 的 **LaTeX** 润色流水线：按 `\section` / `\subsection` 推进，审稿模型列问题，编辑模型给出修改稿，评分模型打分；**仅当分数优于该节上次采纳结果时采纳**，否则对该节**回滚**。
 
-英文说明：**[README.md](README.md)**（与本文结构、命令示例一致）。
+英文说明：**[README.md](README.md)**（与本文结构、命令一致）。
 
----
+## 能做什么
 
-## 能帮你做什么
+- 对接本机或远端的 **OpenAI 兼容**接口（如 Ollama），或选用 **ollama_native** 走原生参数。
+- **`proofread`**：以审稿问题为牵引的**轻量、安全**修改；**`rewrite`**：单节内更大范围润色，**不编造结论**、**不破坏**引用、标签、交叉引用与数学环境。
+- 可选：**`rewrite` 后再跑一轮 `proofread`**（同一条命令）。
+- 生成新的 **`.tex`**，并在默认 **`logs/`** 下写**带时间戳日志**。
 
-- 在本地对接 **Ollama** 或任意 **OpenAI 兼容**接口（自建或云端）。
-- 选择 **轻度订正**（`proofread`）或 **幅度更大的重写式润色**（`rewrite`）。
-- 可选：在 **`rewrite` 之后自动再接一轮 `proofread`**（同一条命令，模型耗时更多）。
-- 得到新的 **`.tex` 文件**，并在 **`logs/`** 下生成**带时间戳的日志**。
-
----
-
-## 使用前准备
+## 环境要求
 
 - **Python 3.10+**
-- 运行 **`run.py`**：可用的 **OpenAI 兼容**服务（常见为本机 Ollama，`http://127.0.0.1:11434/v1`），以及配置里写的模型。
-- 运行 **`run_demo.py`**：无需大模型（Mock 流程）。
-
----
+- 跑 **`run.py`**：可访问的 LLM 与配置中的模型名。
+- 跑 **`run_demo.py`**：无需网络（Mock）。
 
 ## 安装
 
@@ -42,32 +36,39 @@ python -m pip install -r requirements-lock.txt
 
 （也可：`python -m pip install -r requirements.txt`。）
 
-若在 YAML 中设置 **`llm.backend: ollama_native`**，还需：
+若 YAML 中设置 **`llm.backend: ollama_native`**：
 
 ```bash
 python -m pip install langchain-ollama
 ```
 
----
+### Conda（可选）
+
+仓库提供 **`environment.yml`**（仅**环境名**与依赖列表，不含本机路径）：
+
+```bash
+conda env create -f environment.yml
+conda activate <environment.yml 中的 name>
+```
+
+更新依赖：`conda env update -f environment.yml`。在 **Windows** 上可不先激活，直接：**`.\scripts\conda_run.ps1 python -m pytest tests/ -q`**。编辑器任务模板见 **`contrib/vscode/`**（复制到本地 `.vscode/`，说明见 **`contrib/vscode/README.md`**）。
 
 ## 首次配置
 
-1. 复制示例配置为本地文件（若含密钥请勿提交）：
+1. 复制示例为本地文件（含密钥时**勿提交**）：
 
    ```bash
    copy config\local.example.yaml config\local.yaml   # Windows
    # cp config/local.example.yaml config/local.yaml   # macOS / Linux
    ```
 
-2. 编辑 **`config/local.yaml`**。本机 Ollama 常用 `api_key: ollama`；云端 Key **不要**提交进仓库，可使用 **`config/*.private.yaml`**（见 `.gitignore`）。
+2. 编辑 **`config/local.yaml`**。本机 Ollama 常用 `api_key: ollama`；云端 Key 请放 **`config/*.private.yaml`**（见 `.gitignore`），不要写进会被提交的仓库文件。
 
-3. 默认输入/输出由 `input_path`、`output_path` 指定。仓库自带示例稿 **`sample_manuscript.tex`**；撰写真实论文时请把 `input_path` 指到自己的 `.tex`。
+3. 配置 **`input_path` / `output_path`**，或使用命令行 **`--input` / `--output`**。示例稿为 **`sample_manuscript.tex`**。
 
----
+## 运行示例
 
-## 用示例稿跑一遍
-
-**完整流水线（会调用你配置的模型）：**
+**完整流水线（会调用模型）：**
 
 ```bash
 python run.py --input sample_manuscript.tex --output output.tex
@@ -79,7 +80,7 @@ python run.py --input sample_manuscript.tex --output output.tex
 python run.py --input sample_manuscript.tex --output draft.tex --mode rewrite
 ```
 
-**不接大模型，体验流程（Mock）：**
+**不接大模型（Mock）：**
 
 ```bash
 python run_demo.py
@@ -91,62 +92,49 @@ python run_demo.py
 python run.py --version
 ```
 
----
+## 自己的论文与私稿目录
 
-## 使用自己的论文
-
-- 使用命令行 **`--input`**、**`--output`**，或在 `config/local.yaml` 里设置 **`input_path` / `output_path`**。
-- 私人手稿勿纳入版本库（需要时把文件名或通配规则写入 `.gitignore`）。仓库附带 **`sample_manuscript.tex`** 仅作**演示**；请自行在 `.gitignore` 中补充你不想提交的本地 `.tex` 规则。
-
----
+- 使用 **`--input` / `--output`** 或 YAML 中的路径字段。
+- **Windows 双击：** 在仓库根使用 **`private/`**（由 **`.gitignore`** 中 **`/private/`** 忽略）。放置 **`run_my_paper.bat`**、**`run_config.yaml`**；**`input_path` 相对路径以仓库根为基准**（不是相对 `private/`）。详见 **[contrib/private/README.md](contrib/private/README.md)**（编码、`conda.exe` 与 **`CONDA_EXE_PATH`** 等）。
+- 本地私稿请在 **`.gitignore`** 中增加规则，避免误提交。
 
 ## 编辑风格（`mode`）
 
 | 模式 | 说明 |
 |------|------|
-| **`proofread`**（默认） | 以审稿问题为牵引做**较小、较安全**的修改。 |
-| **`rewrite`** | 在单节内可做**更大范围**的句式与衔接调整；**禁止**编造实验/结论，**禁止**破坏 `\cite`、`\ref`、`\label` 与数学环境等。 |
+| **`proofread`**（默认） | 较小幅度、以审稿问题为导向的修改。 |
+| **`rewrite`** | 单节内更大范围句式与衔接调整；遵守引用与结构约束。 |
 
-命令行 **`--mode`** 会覆盖当次运行 YAML 中的 `mode`。
-
----
+命令行 **`--mode`** 覆盖当次 YAML 中的 `mode`。
 
 ## 可选：重写后再订正
 
-在 **`--mode rewrite`** 时加上 **`--post-proofread`**（或在 YAML 设 `post_proofread_after_rewrite: true`），会在同一命令内再跑一轮 **`proofread`** 图，**额外消耗**模型时间；第二轮外层迭代上限由 **`post_proofread_max_iterations`** 控制。
+**`--mode rewrite`** 时加 **`--post-proofread`**（或 YAML 中 `post_proofread_after_rewrite: true`），会在同一命令内再跑 **`proofread`**；耗时更多，第二轮外层迭代上限为 **`post_proofread_max_iterations`**。
 
----
+## 输出位置
 
-## 输出在哪里
+- **TeX：** **`--output`** 或 **`output_path`**（如 `output.tex`；该文件名默认在 `.gitignore` 中）。
+- **日志：** **`log_dir`**（默认 `logs/`），如 `run_YYYYMMDD_HHMMSS.log`。
 
-- **润色后的 TeX：** `--output` 或 `output_path` 指定（常见为 `output.tex`；该文件名默认在 `.gitignore` 中，避免误提交）。
-- **日志：** 在 **`log_dir`**（默认 `logs/`），形如 `run_YYYYMMDD_HHMMSS.log`。
-
-若部分模型调用失败，**`run.py` 仍会写出当前 TeX**，但默认以退出码 **`1`** 结束，除非使用 **`--allow-llm-failures`**。
-
----
+部分 LLM 失败时，**`run.py` 仍会写出当前 TeX**，默认退出码 **`1`**，除非使用 **`--allow-llm-failures`**。
 
 ## 常用配置项
 
-默认读取 **`config/local.yaml`**，可用 **`--config`** 指定其他路径。
+默认 **`config/local.yaml`**，可用 **`--config`** 指定其他文件。
 
 | 配置项 | 含义 |
 |--------|------|
-| `input_path` / `output_path` | 默认输入、输出 TeX 路径 |
+| `input_path` / `output_path` | 默认输入、输出 TeX |
 | `mode` | `proofread` 或 `rewrite` |
-| `post_proofread_after_rewrite` | 与 `rewrite` 同时为真时，再跑一轮 `proofread`（也可用 `--post-proofread`） |
+| `post_proofread_after_rewrite` | 与 `rewrite` 同时为真时再跑 `proofread`（也可用 `--post-proofread`） |
 | `post_proofread_max_iterations` | 第二轮订正的外层迭代上限 |
 | `max_iterations` | 整稿外层轮次上限 |
-| `max_no_improve` | 单节连续未超过「上次采纳分」时的重试上限，达到后跳过该节 |
+| `max_no_improve` | 单节未超过上次采纳分时的重试上限 |
 | `log_level` / `log_dir` | 日志级别与目录 |
-| `ollama_healthcheck` | 为 `true` 时启动前探测 Ollama `GET /api/tags`；非 Ollama 服务请改为 `false` |
-| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature` |
+| `ollama_healthcheck` | 为 `true` 时启动前请求 Ollama `GET /api/tags` |
+| `llm` | `backend`、`base_url`、`api_key`、可选 `request_timeout`、各角色 `model` / `temperature`，以及可选的生成与解析重试相关项（见示例 YAML） |
 
-更完整示例见 **`config/local.example.yaml`**。
-
-**优先级：** 命令行可覆盖项 **优于** YAML **优于** 内置默认值。
-
----
+更完整示例见 **`config/local.example.yaml`**。**优先级：** 命令行（支持的项）> YAML > 内置默认值。
 
 ## 常用命令行参数
 
@@ -155,35 +143,38 @@ python run.py --version
 | `--input` / `--output` | 输入、输出 `.tex` |
 | `--config` | YAML 路径（默认 `config/local.yaml`） |
 | `--mode` | `proofread` 或 `rewrite` |
-| `--post-proofread` | `rewrite` 完成后衔接一轮 `proofread` |
-| `--max-iterations` / `--max-no-improve` | 覆盖迭代相关上限 |
+| `--post-proofread` | `rewrite` 后衔接 `proofread` |
+| `--max-iterations` / `--max-no-improve` | 覆盖迭代上限 |
 | `--log-level` | 如 `INFO`、`DEBUG` |
-| `--allow-llm-failures` | 部分 LLM 失败时仍返回退出码 `0` |
+| `--allow-llm-failures` | 部分 LLM 失败仍返回退出码 `0` |
 | `--version` | 打印版本 |
 
----
-
-## LLM 后端（简表）
+## LLM 后端
 
 | `llm.backend` | 适用场景 |
 |---------------|----------|
 | **`openai_compatible`**（默认） | 标准 OpenAI 风格 `/v1`：Ollama、vLLM、多数云 API。 |
-| **`ollama_native`** | 需原生参数（如关闭部分 Qwen 的 thinking）；依赖 `langchain-ollama`。 |
+| **`ollama_native`** | 需要原生 Ollama 参数（如关闭部分模型的 thinking）；需安装 `langchain-ollama`。 |
 
----
+**Ollama 与结构化输出：** 默认支持配置 **`num_predict`**（生成长度上限）及对结构化链路的 **JSON 解析重试**；**editor** 角色可使用更高的重试上限。若某节仍解析失败，该节可能被**跳过**并记日志；可尝试换模型、加大上下文、调整 **`num_predict`** 或拆分过长小节—详见 **`config/local.example.yaml`** 与运行日志。
 
 ## 常见问题
 
 | 现象 | 处理建议 |
 |------|----------|
-| `ModuleNotFoundError` | 在已激活环境中重装 `requirements-lock.txt`；`ollama_native` 需安装 `langchain-ollama`。 |
-| 无法连接 Ollama | 确认已 `ollama serve`；`base_url` 可试 `http://127.0.0.1:11434/v1`；非 Ollama 服务请关闭 `ollama_healthcheck`。 |
-| 超时或很慢 | 在 YAML 中增大或去掉 `llm.request_timeout`。 |
-| 终端里 TeX 被截断 | 完整结果在输出 `.tex` 文件中。 |
-| 日志里 Editor JSON 警告 | 过长小节：换更大上下文、更守 JSON 的模型，或拆分章节。 |
+| `ModuleNotFoundError` | 重装 `requirements-lock.txt`；`ollama_native` 需 `langchain-ollama`。 |
+| 连不上 Ollama | 确认 `ollama serve`；`base_url` 可试 `http://127.0.0.1:11434/v1`；非 Ollama 服务请关 `ollama_healthcheck`。 |
+| 很慢 / 超时 | 调整或去掉 `llm.request_timeout`；若 JSON 被截断可增大 `num_predict`。 |
+| 终端里 TeX 显示不全 | 以输出 `.tex` 文件为准。 |
+| Editor JSON / 某节被跳过 | 缩短小节、换更守 JSON 的模型、调大 `num_predict` 或重试相关配置。 |
+| Windows bat / conda 异常 | 见 **[contrib/private/README.md](contrib/private/README.md)**。 |
 
----
+## 开发
+
+```bash
+python -m pytest tests/ -q
+```
 
 ## 版本
 
-执行 `python run.py --version`，应与 `_version.py` 及 `pyproject.toml` 中版本一致（发版时请同步修改）。
+执行 `python run.py --version`，发版时请与 **`_version.py`**、**`pyproject.toml`** 保持一致。

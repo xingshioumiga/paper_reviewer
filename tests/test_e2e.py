@@ -14,7 +14,8 @@ def test_graph_invoke_generates_history(monkeypatch):
 
     tex = Path("sample_manuscript.tex").read_text(encoding="utf-8")
     initial_state = GraphState(original_tex=tex, max_iterations=1, max_no_improve=5)
-    result = graph.invoke(initial_state)
+    # 与 run.py 一致；sample_manuscript 多节时默认 recursion_limit=25 不够 / match run.py; default 25 is too low for multi-section TeX.
+    result = graph.invoke(initial_state, {"recursion_limit": 100})
     final_state = GraphState(**result) if isinstance(result, dict) else result
 
     assert final_state.iteration == 1

@@ -34,6 +34,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm": {
         "base_url": "http://localhost:11434/v1",
         "api_key": "ollama",
+        # Ollama 原生路径：最大生成 token，长 JSON（如整节 LaTeX）易截断时可调大 / native Ollama: max output tokens; raise for long JSON.
+        # 设为 null 则不在请求里传 num_predict（用模型默认）/ null omits num_predict (model default).
+        "num_predict": 24576,
+        # OllamaStructuredLLM：单次调用的 JSON 解析最大尝试次数（含首次）/ max JSON parse attempts per invoke (including first).
+        "json_parse_retries": 3,
         # 不设 request_timeout 则沿用 LangChain/httpx 默认（不按秒硬断）/ omit for library default timeout.
         # 可在 config/local.yaml 的 llm 下写 request_timeout: 600 等正数启用 / set positive seconds in local.yaml to enable.
         "reviewer": {
@@ -43,6 +48,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "editor": {
             "model": "qwen2.5:14b",
             "temperature": 0.7,
+            # 编辑返回整段 LaTeX JSON，默认可比全局多试几次 / editor returns full-body JSON; allow more parse retries than global.
+            "json_parse_retries": 5,
         },
         "critic": {
             "model": "qwen2.5:14b",

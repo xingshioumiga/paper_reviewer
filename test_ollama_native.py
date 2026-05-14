@@ -21,6 +21,12 @@ from langgraph_nodes import (
 from langgraph_state import Issue
 
 
+# 手动 smoke 用极简 system（正式跑请用 ``init_llms_from_config`` 加载的提示）/ minimal system prompts for local smoke only.
+_SMOKE_REVIEWER_SYS = "你是审稿人。只输出合法 JSON，键 issues 为对象数组，每项含 section_id, problem, severity, span。"
+_SMOKE_EDITOR_SYS = "你是 LaTeX 编辑。只输出合法 JSON，单键 refined_latex，值为完整段落字符串。"
+_SMOKE_CRITIC_SYS = "你是评分员。只输出合法 JSON，单键 score，0到1的浮点数。"
+
+
 def test_ollama_native_basic():
     """基本 Ollama 原生客户端创建 / basic Ollama native client creation."""
     print("=" * 60)
@@ -59,7 +65,7 @@ def test_ollama_reviewer():
             disable_thinking=True,
             role="reviewer",
         )
-        chain = OllamaReviewerChain(llm)
+        chain = OllamaReviewerChain(llm, _SMOKE_REVIEWER_SYS)
 
         # 最小输入样例 / minimal sample input.
         test_input = {
@@ -97,7 +103,7 @@ def test_ollama_editor():
             disable_thinking=True,
             role="editor",
         )
-        chain = OllamaEditorChain(llm)
+        chain = OllamaEditorChain(llm, _SMOKE_EDITOR_SYS)
 
         # 最小输入样例 / minimal sample input.
         test_issues = [
@@ -138,7 +144,7 @@ def test_ollama_critic():
             disable_thinking=True,
             role="critic",
         )
-        chain = OllamaCriticChain(llm)
+        chain = OllamaCriticChain(llm, _SMOKE_CRITIC_SYS)
 
         # 最小输入样例 / minimal sample input.
         test_input = {

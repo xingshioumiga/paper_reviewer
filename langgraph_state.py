@@ -72,6 +72,8 @@ class GraphState(BaseModel):
     section_no_improve_rounds: dict[str, int] = Field(default_factory=dict)
     # 已标记跳过的 section id / section ids marked skipped after too many non-improving tries.
     skipped_section_ids: list[str] = Field(default_factory=list)
+    # Editor 结构化输出失败后被显式跳过的节（不计入 llm_failure_count）/ sections skipped after editor JSON failure (not in llm_failure_count).
+    editor_skipped_section_ids: list[str] = Field(default_factory=list)
 
     # 当前这一轮 scan 中被采纳的修改次数；轮末若为 0 则触发提前结束。
     # Accepted edits in the current full pass over sections; 0 → early stop next route.

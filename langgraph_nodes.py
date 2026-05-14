@@ -147,6 +147,27 @@ def _maybe_streaming_callbacks(role: str) -> list[BaseCallbackHandler] | None:
     return None
 
 
+# Ollama JSON 重试附言：审稿/评分用 / generic JSON retry hint for reviewer and critic.
+_DEFAULT_OLLAMA_JSON_RETRY_HINT = (
+    "上一版输出无法解析为合法 JSON。"
+    "规则：字符串内的反斜杠必须写成 \\\\；字符串内不要出现未转义的双引号；"
+    "problem 每条不超过 120 个中文字符，少用 LaTeX 命令字面量，改用文字描述（如「section 标题」）。"
+    "请只输出一整段合法 UTF-8 JSON，不要用 Markdown 围栏，不要用「…」截断。"
+)
+
+# 编辑链专用：整段 LaTeX 嵌入 ``refined_latex`` 时易超长或破坏 JSON / editor-specific hint for embedded LaTeX JSON.
+_EDITOR_OLLAMA_JSON_RETRY_HINT = (
+    "上一版输出无法解析为合法 JSON。"
+    "你必须只输出一个 JSON 对象，且仅含键 refined_latex。"
+    "refined_latex 的值是一个 JSON 字符串：内部双引号必须写成 \\\"；反斜杠必须写成 \\\\。"
+    "不要在 JSON 字符串未闭合时结束输出；不要用「…」或省略号代替正文。"
+    "若段落很长，优先做最小必要修改以缩短输出 token，但仍须输出完整合法 JSON（字符串必须正确闭合）。"
+    "不要使用 Markdown 代码围栏；不要输出 JSON 以外的任何文字。"
+)
+
+_NUM_PREDICT_UNSET = object()
+
+
 # =========================
 # Ollama 原生 API 封装（如禁用 thinking）/ Ollama native API wrapper (e.g. disable thinking)
 # =========================
@@ -164,7 +185,7 @@ class OllamaStructuredLLM:
         disable_thinking: bool = True,
         role: str = "",
         timeout: float | None = None,
-        num_predict: int | None = 8192,
+        num_predict: int | None | object = _NUM_PREDICT_UNSET,
     ) -> None:
         if not _OLLAMA_AVAILABLE:
             raise ImportError(
@@ -187,39 +208,48 @@ class OllamaStructuredLLM:
             "temperature": temperature,
             "reasoning": reasoning,
         }
-        if num_predict is not None:
-            llm_kw["num_predict"] = num_predict
+        if num_predict is _NUM_PREDICT_UNSET:
+            resolved_np: int | None = int(DEFAULT_CONFIG["llm"].get("num_predict", 24576))
+        elif num_predict is None:
+            resolved_np = None
+        else:
+            resolved_np = int(num_predict)  # type: ignore[arg-type]
+        if resolved_np is not None:
+            llm_kw["num_predict"] = resolved_np
         self.llm = OllamaLLM(**llm_kw)
         logger.debug(
             "Ollama native client created: model=%s, reasoning=%s, num_predict=%s",
             model,
             reasoning,
-            num_predict,
+            resolved_np,
         )
 
-    def invoke(self, messages: list, output_schema: type[T]) -> T:
+    def invoke(
+        self,
+        messages: list,
+        output_schema: type[T],
+        *,
+        retry_hint: str | None = None,
+        max_parse_attempts: int = 3,
+    ) -> T:
         """调用 Ollama 并解析结构化输出；失败则有限次重试 / invoke Ollama; parse structured output with bounded retries."""
-        retry_hint = (
-            "上一版输出无法解析为合法 JSON。"
-            "规则：字符串内的反斜杠必须写成 \\\\；字符串内不要出现未转义的双引号；"
-            "problem 每条不超过 120 个中文字符，少用 LaTeX 命令字面量，改用文字描述（如「section 标题」）。"
-            "请只输出一整段合法 UTF-8 JSON，不要用 Markdown 围栏，不要用「…」截断。"
-        )
+        hint = retry_hint if retry_hint is not None else _DEFAULT_OLLAMA_JSON_RETRY_HINT
         msgs: list[Any] = list(messages)
         last_err: BaseException | None = None
-        for attempt in range(3):
+        for attempt in range(max_parse_attempts):
             response = self.llm.invoke(msgs)
             try:
                 return self._parse_response(response, output_schema)
             except ValueError as e:
                 last_err = e
                 logging.getLogger(__name__).warning(
-                    "OllamaStructuredLLM JSON parse failed attempt %s/3 role=%s: %s",
+                    "OllamaStructuredLLM JSON parse failed attempt %s/%s role=%s: %s",
                     attempt + 1,
+                    max_parse_attempts,
                     self.role,
                     e,
                 )
-                msgs = list(messages) + [HumanMessage(content=retry_hint)]
+                msgs = list(messages) + [HumanMessage(content=hint)]
         assert last_err is not None
         raise last_err
 
@@ -277,9 +307,15 @@ from langchain_core.runnables import Runnable
 class OllamaReviewerChain(Runnable):
     """Ollama 审稿 Runnable；返回 ``ReviewOutput`` / Ollama reviewer runnable returning ``ReviewOutput``."""
 
-    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
+    def __init__(
+        self,
+        llm: OllamaStructuredLLM,
+        system_prompt: str,
+        max_parse_attempts: int = 3,
+    ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
+        self.max_parse_attempts = max(1, int(max_parse_attempts))
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ReviewOutput:
         # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
@@ -294,15 +330,21 @@ class OllamaReviewerChain(Runnable):
                 SystemMessage(content=self.system_prompt),
                 HumanMessage(content=f"标题: {title}\n\n内容:\n{content}"),
             ]
-        return self.llm.invoke(messages, ReviewOutput)
+        return self.llm.invoke(messages, ReviewOutput, max_parse_attempts=self.max_parse_attempts)
 
 
 class OllamaEditorChain(Runnable):
     """Ollama 编辑 Runnable；返回 ``EditorOutput`` / Ollama editor runnable returning ``EditorOutput``."""
 
-    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
+    def __init__(
+        self,
+        llm: OllamaStructuredLLM,
+        system_prompt: str,
+        max_parse_attempts: int = 3,
+    ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
+        self.max_parse_attempts = max(1, int(max_parse_attempts))
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> EditorOutput:
         # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
@@ -319,15 +361,26 @@ class OllamaEditorChain(Runnable):
                     content=f"标题: {title}\n\n当前段落内容:\n{content}\n\n需要修复的问题:\n{issues_text}\n\n请提供优化后的 LaTeX 段落。"
                 ),
             ]
-        return self.llm.invoke(messages, EditorOutput)
+        return self.llm.invoke(
+            messages,
+            EditorOutput,
+            retry_hint=_EDITOR_OLLAMA_JSON_RETRY_HINT,
+            max_parse_attempts=self.max_parse_attempts,
+        )
 
 
 class OllamaCriticChain(Runnable):
     """Ollama 评分 Runnable；返回 ``ScoreOutput`` / Ollama critic runnable returning ``ScoreOutput``."""
 
-    def __init__(self, llm: OllamaStructuredLLM, system_prompt: str) -> None:
+    def __init__(
+        self,
+        llm: OllamaStructuredLLM,
+        system_prompt: str,
+        max_parse_attempts: int = 3,
+    ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
+        self.max_parse_attempts = max(1, int(max_parse_attempts))
 
     def invoke(self, inputs: dict[str, Any], config: Any = None, **kwargs: Any) -> ScoreOutput:
         # ChatPromptValue：来自 ``prompt | chain`` / handle ``ChatPromptValue`` from ``prompt | chain``.
@@ -340,7 +393,7 @@ class OllamaCriticChain(Runnable):
                 SystemMessage(content=self.system_prompt),
                 HumanMessage(content=f"修改前: {before}\n\n修改后: {after}"),
             ]
-        return self.llm.invoke(messages, ScoreOutput)
+        return self.llm.invoke(messages, ScoreOutput, max_parse_attempts=self.max_parse_attempts)
 
 
 # 运行期由 init_llms_from_config 填充；import 时用 DEFAULT_CONFIG 预初始化一次。
@@ -351,6 +404,28 @@ llm_ini_critic: ChatOpenAI
 llm_structured_reviewer: Any
 llm_strucured_editor: Any
 llm_structured_critic: Any
+
+
+def _resolved_num_predict(llm_cfg: dict[str, Any], role: dict[str, Any]) -> int | None:
+    """角色可覆盖 ``num_predict``；``null`` 表示不传 Ollama（模型默认）/ per-role override; ``null`` omits for Ollama default."""
+    if "num_predict" in role:
+        v = role.get("num_predict")
+        return None if v is None else int(v)
+    v = llm_cfg.get("num_predict", DEFAULT_CONFIG["llm"].get("num_predict", 24576))
+    if v is None:
+        return None
+    return int(v)
+
+
+def _resolved_json_parse_attempts(llm_cfg: dict[str, Any], role: dict[str, Any], fallback: int) -> int:
+    """``json_parse_retries``：角色优先，其次 ``llm`` 顶层，最后 ``fallback`` / role wins, then top-level ``llm``, then fallback."""
+    v = role.get("json_parse_retries")
+    if v is not None:
+        return max(1, int(v))
+    v = llm_cfg.get("json_parse_retries")
+    if v is not None:
+        return max(1, int(v))
+    return max(1, int(fallback))
 
 
 def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
@@ -398,12 +473,37 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
                 "backend='ollama_native' requires langchain-ollama. "
                 "Install: pip install langchain-ollama"
             )
+        np_rv = _resolved_num_predict(llm_cfg, rv)
+        np_ed = _resolved_num_predict(llm_cfg, ed)
+        np_cr = _resolved_num_predict(llm_cfg, cr)
+        attempts_rv = _resolved_json_parse_attempts(
+            llm_cfg,
+            rv,
+            int(DEFAULT_CONFIG["llm"].get("json_parse_retries", 3)),
+        )
+        attempts_ed = _resolved_json_parse_attempts(
+            llm_cfg,
+            ed,
+            int(DEFAULT_CONFIG["llm"].get("editor", {}).get("json_parse_retries", 5)),
+        )
+        attempts_cr = _resolved_json_parse_attempts(
+            llm_cfg,
+            cr,
+            int(DEFAULT_CONFIG["llm"].get("json_parse_retries", 3)),
+        )
+
         logger.info(
             "Using Ollama native backend (think=false) for models: "
-            "reviewer=%s, editor=%s, critic=%s",
+            "reviewer=%s, editor=%s, critic=%s num_predict=(%s,%s,%s) json_parse_attempts=(%s,%s,%s)",
             rv.get("model", "qwen2.5:14b"),
             ed.get("model", "qwen2.5:14b"),
             cr.get("model", "qwen2.5:14b"),
+            np_rv,
+            np_ed,
+            np_cr,
+            attempts_rv,
+            attempts_ed,
+            attempts_cr,
         )
 
         ollama_reviewer = OllamaStructuredLLM(
@@ -412,6 +512,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             temperature=float(rv.get("temperature", 0.1)),
             disable_thinking=True,
             role="reviewer",
+            num_predict=np_rv,
         )
         ollama_editor = OllamaStructuredLLM(
             model=str(ed.get("model", "qwen2.5:14b")),
@@ -419,6 +520,7 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             temperature=float(ed.get("temperature", 0.7)),
             disable_thinking=True,
             role="editor",
+            num_predict=np_ed,
         )
         ollama_critic = OllamaStructuredLLM(
             model=str(cr.get("model", "qwen2.5:14b")),
@@ -426,17 +528,24 @@ def init_llms_from_config(config: dict[str, Any] | None = None) -> None:
             temperature=float(cr.get("temperature", 0.0)),
             disable_thinking=True,
             role="critic",
+            num_predict=np_cr,
         )
 
         # Runnable 包装原生客户端；system 与当前 mode 一致 / Runnable wrappers; system prompt matches resolved mode.
         llm_structured_reviewer = OllamaReviewerChain(
-            ollama_reviewer, system_prompt_for("reviewer", mode_resolved)
+            ollama_reviewer,
+            system_prompt_for("reviewer", mode_resolved),
+            max_parse_attempts=attempts_rv,
         )
         llm_strucured_editor = OllamaEditorChain(
-            ollama_editor, system_prompt_for("editor", mode_resolved)
+            ollama_editor,
+            system_prompt_for("editor", mode_resolved),
+            max_parse_attempts=attempts_ed,
         )
         llm_structured_critic = OllamaCriticChain(
-            ollama_critic, system_prompt_for("critic", mode_resolved)
+            ollama_critic,
+            system_prompt_for("critic", mode_resolved),
+            max_parse_attempts=attempts_cr,
         )
 
     else:
@@ -559,6 +668,7 @@ def init_node(state: GraphState) -> GraphState:
     state.current_section_index = 0
     state.section_no_improve_rounds = {section.id: 0 for section in sections}
     state.skipped_section_ids = []
+    state.editor_skipped_section_ids = []
     state.iteration_accepted_count = 0
     state.stop_due_to_no_document_improve = False
     state.llm_failure_count = 0
@@ -775,8 +885,31 @@ def editor_node_llm(state: GraphState):
         ))
 
     except Exception as e:
-        state.llm_failure_count += 1
         logger.error("editor_node_llm failed: %s", e, exc_info=True)
+        # 占位 history + 跳过后续 reviewer，避免 critic 误用旧 history / placeholder history + skip; avoids critic using stale history[-1].
+        body = section.content
+        state.history.append(
+            HistoryItem(
+                iteration=state.iteration,
+                section_id=section.id,
+                before=body,
+                after=body,
+                score=0.0,
+                accepted=False,
+            )
+        )
+        if section.id not in state.skipped_section_ids:
+            state.skipped_section_ids.append(section.id)
+        if section.id not in state.editor_skipped_section_ids:
+            state.editor_skipped_section_ids.append(section.id)
+        logger.warning(
+            "EDITOR_SECTION_SKIPPED: section_id=%s reason=structured_output_failed "
+            "content_chars=%s num_issues=%s error_type=%s",
+            section.id,
+            len(body),
+            len(current_section_issues),
+            type(e).__name__,
+        )
 
     # 与 mock editor 日志字段一致 / align log fields with mock editor.
     logger.info(

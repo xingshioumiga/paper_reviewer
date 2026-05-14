@@ -32,6 +32,11 @@ llm:
   base_url: http://127.0.0.1:11434/v1
   api_key: ollama
 
+  # ollama_native only: max output tokens per call (raise if editor JSON truncates). null = omit (model default).
+  # num_predict: 32768
+  # JSON parse attempts per role (including first try); editor defaults higher in built-in DEFAULT_CONFIG.
+  # json_parse_retries: 3
+
   # Example 1: Qwen2.5 series (works with both backends, no thinking mode)
   reviewer:
     model: qwen2.5:14b
