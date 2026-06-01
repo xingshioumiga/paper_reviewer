@@ -6,11 +6,22 @@
 
 Chinese guide: **[README_zh.md](README_zh.md)**.
 
+> **Layout note:** tracked examples and docs live under **`examples/`**, **`docs/`**, and **`templates/`** (formerly `contrib/`). Local-only runtime files stay in gitignored **`private/`** at the repo root.
+
+## Repository layout
+
+| Path | Purpose |
+|------|---------|
+| **`private/`** | Gitignored local runner: `run_config.yaml`, bat, glossary files, outputs |
+| **`examples/`** | Committed templates ([index](examples/README.md)) to copy into `private/` |
+| **`templates/`** | Editor/tool templates (e.g. VS Code tasks under `templates/vscode/`) |
+| **`docs/`** | Usage guides ([index](docs/README.md), e.g. [web-ui.md](docs/web-ui.md), [local-runner.md](docs/local-runner.md)) |
+
 ## What’s new in **0.4.0** (major update)
 
-- **Glossary pipeline (enabled by default):** before each section’s reviewer, a **glossary** step can extract abbreviations into a merged table (**`locked`** from `private/glossary.seed.yaml` + model **`provisional`**). The same table is injected into **reviewer / editor / critic** prompts for consistent terminology. It runs **once per section on outer iteration 0** only. Set **`glossary.enabled: false`** in YAML to skip the extra LLM calls. See [`glossary_merge.py`](glossary_merge.py), **[contrib/private/README.md](contrib/private/README.md)**, and [`config/local.example.yaml`](config/local.example.yaml).
+- **Glossary pipeline (enabled by default):** before each section’s reviewer, a **glossary** step can extract abbreviations into a merged table (**`locked`** from `private/glossary.seed.yaml` + model **`provisional`**). The same table is injected into **reviewer / editor / critic** prompts for consistent terminology. It runs **once per section on outer iteration 0** only. Set **`glossary.enabled: false`** in YAML to skip the extra LLM calls. See [`glossary_merge.py`](glossary_merge.py), **[docs/local-runner.md](docs/local-runner.md)**, and [`config/local.example.yaml`](config/local.example.yaml).
 - **Ollama resilience:** bounded **retries** for dropped HTTP streams and transient **502 / 503 / 504** on native Ollama calls; existing **`num_predict`** and JSON parse retry settings for long sections.
-- **Private runner docs:** expanded **[contrib/private/README.md](contrib/private/README.md)** (bat encoding, conda `Scripts\conda.exe`, long-run Ollama tips).
+- **Private runner docs:** expanded **[docs/local-runner.md](docs/local-runner.md)** (bat encoding, conda `Scripts\conda.exe`, long-run Ollama tips).
 
 ## What you get
 
@@ -58,7 +69,7 @@ conda env create -f environment.yml
 conda activate <env-name-from-environment.yml>
 ```
 
-Later: `conda env update -f environment.yml`. On **Windows**, without activating: **`.\scripts\conda_run.ps1 python -m pytest tests/ -q`**. VS Code task templates: **`contrib/vscode/`** (copy into `.vscode/`; see **`contrib/vscode/README.md`**).
+Later: `conda env update -f environment.yml`. On **Windows**, without activating: **`.\scripts\conda_run.ps1 python -m pytest tests/ -q`**. VS Code task templates: **`templates/vscode/`** (copy into `.vscode/`; see **`templates/vscode/README.md`**).
 
 ## Configuration
 
@@ -73,7 +84,7 @@ Later: `conda env update -f environment.yml`. On **Windows**, without activating
 
 3. Set **`input_path`** / **`output_path`**, or pass **`--input`** / **`--output`**. The repo ships **`sample_manuscript.tex`** as a demo.
 
-4. **Glossary (default `enabled: true` in built-in config):** files live under **`private/`** (gitignored). Copy **[contrib/private/glossary.seed.example.yaml](contrib/private/glossary.seed.example.yaml)** to **`private/glossary.seed.yaml`** for manual **`locked:`** entries; **`private/glossary.merged.yaml`** is updated when **`persist_merged_after_merge`** is true. Set **`glossary.enabled: false`** to disable glossary LLM calls entirely.
+4. **Glossary (default `enabled: true` in built-in config):** files live under **`private/`** (gitignored). Copy **[examples/glossary.seed.example.yaml](examples/glossary.seed.example.yaml)** to **`private/glossary.seed.yaml`** for manual **`locked:`** entries; **`private/glossary.merged.yaml`** is updated when **`persist_merged_after_merge`** is true. Set **`glossary.enabled: false`** to disable glossary LLM calls entirely.
 
 ## Run
 
@@ -101,10 +112,19 @@ python run_demo.py
 python run.py --version
 ```
 
+## Local Web UI
+
+```bash
+python -m pip install fastapi "uvicorn[standard]"
+python web_app.py
+```
+
+Open **http://127.0.0.1:7860/** for the dark dashboard (configure paths, run, tail logs, preview output/glossary). See **[docs/web-ui.md](docs/web-ui.md)**.
+
 ## Your own manuscript & private runner
 
 - Use **`--input`** / **`--output`** or YAML **`input_path`** / **`output_path`**.
-- **Windows double-click:** keep drafts out of git with a root **`private/`** folder (ignored by **`/private/`** in `.gitignore`). Put **`run_my_paper.bat`** and **`run_config.yaml`** there; see **[contrib/private/README.md](contrib/private/README.md)** for encoding, conda path, and `input_path` relative to the **repo root**.
+- **Windows double-click:** keep drafts out of git with a root **`private/`** folder (ignored by **`/private/`** in `.gitignore`). Copy templates from **`examples/`** (`run_config.example.yaml`, `run_my_paper.bat.example`) into **`private/`**; see **[docs/local-runner.md](docs/local-runner.md)** for encoding, conda path, and `input_path` relative to the **repo root**.
 - Add patterns to **`.gitignore`** for any local-only `.tex` you never want committed.
 
 ## Editing styles (`mode`)
@@ -179,7 +199,7 @@ See **`config/local.example.yaml`**. **Precedence:** CLI (where supported) > YAM
 | Slow / timeouts | Adjust or clear `llm.request_timeout`; increase `num_predict` if output is truncated mid-JSON. |
 | Terminal truncates TeX | Open the output `.tex` file. |
 | Editor JSON / skipped section | Shorter sections, larger context, more reliable JSON model, or higher `num_predict` / retries in config. |
-| Windows bat / conda issues | See **[contrib/private/README.md](contrib/private/README.md)** (encoding, `conda.exe` vs `conda.bat`, `CONDA_EXE_PATH`). |
+| Windows bat / conda issues | See **[docs/local-runner.md](docs/local-runner.md)** (encoding, `conda.exe` vs `conda.bat`, `CONDA_EXE_PATH`). |
 
 ## Development
 
