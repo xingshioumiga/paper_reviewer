@@ -1,8 +1,8 @@
 # `private/` 本地运行说明 / Local private runner
 
-仓库根目录下的 **`private/`** 由 **`.gitignore`** 中的 **`/private/`** 规则忽略（**仅根目录**）。其中的 `run_my_paper.bat`、`run_config.yaml`、输出文件等 **不会进入 git**。
+仓库根目录下的 **`private/`** 由 **`.gitignore`** 中的 **`/private/`** 规则忽略（**仅根目录**，不会误伤 `contrib/private/`）。其中的 `run_my_paper.bat`、`run_config.yaml`、输出文件等 **不会进入 git**。
 
-克隆仓库后若本地没有 `private/`：在仓库根新建文件夹 `private`，从本机备份复制你的 bat/yaml，或从 **[examples/](../examples/)** 复制模板（见下方）。
+克隆仓库后若本地没有 `private/`：在仓库根新建文件夹 `private`，从本机备份复制你的 bat/yaml，或参考下方自行创建。
 
 ## 文件约定
 
@@ -10,8 +10,6 @@
 |------|------|
 | `private/run_config.yaml` | `run.py --config` 使用的合并配置（可写绝对路径、密钥） |
 | `private/run_my_paper.bat` | 双击运行：切到仓库根并执行 `conda run -n AIagent1 python run.py --config ...` |
-
-模板（进 Git）：**[examples/run_config.example.yaml](../examples/run_config.example.yaml)**、**[examples/run_my_paper.bat.example](../examples/run_my_paper.bat.example)**。
 
 ## Conda 环境名
 
@@ -30,14 +28,14 @@
 
 ## 术语表（Glossary）
 
-用于在长稿分块润色时**锁定缩写与专有名词**（避免模型前后解释不一致）。模板见 **[examples/glossary.seed.example.yaml](../examples/glossary.seed.example.yaml)**。
+用于在长稿分块润色时**锁定缩写与专有名词**（避免模型前后解释不一致）。模板见本目录 **[glossary.seed.example.yaml](glossary.seed.example.yaml)**。
 
 | 路径（均在仓库根 `private/`，不进 git） | 作用 |
 |------|------|
 | `private/glossary.seed.yaml` | 人工维护的 **`locked:`** 缩写 → 英文释义 |
 | `private/glossary.merged.yaml` | 运行中合并结果（含 locked 快照 + 模型 **`provisional`** 增量） |
 
-在 **`config/local.yaml`**（或你的 `run_config.yaml`）里配置（**内置默认 `glossary.enabled` 已为 `true`**。若要关闭术语抽取以省 LLM，设 `enabled: false`）：
+在 **`config/local.yaml`**（或你的 `run_config.yaml`）里配置（**内置默认 `glossary.enabled` 已为 `true`**；`private/run_config.yaml` 已写入该块。若要关闭术语抽取以省 LLM，设 `enabled: false`）：
 
 ```yaml
 glossary:

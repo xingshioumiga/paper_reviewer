@@ -6,22 +6,11 @@
 
 英文说明：**[README.md](README.md)**（与本文结构、命令一致）。
 
-> **目录说明：** 可提交的示例与文档在 **`examples/`**、**`docs/`**、**`templates/`**（原 `contrib/`）。仅本机运行文件放在 gitignore 的仓库根 **`private/`**。
-
-## 目录约定
-
-| 路径 | 用途 |
-|------|------|
-| **`private/`** | 不进 Git：bat、`run_config.yaml`、术语表、输出等 |
-| **`examples/`** | 可提交模板（[索引](examples/README.md)），复制到 `private/` |
-| **`templates/`** | 编辑器模板（如 `templates/vscode/`） |
-| **`docs/`** | 使用说明（[索引](docs/README.md)，如 [web-ui.md](docs/web-ui.md)、[local-runner.md](docs/local-runner.md)） |
-
 ## 0.4.0 大更新摘要
 
-- **术语表 Glossary（内置默认开启）：** 每个 `\section` 在审稿前可增加一步 **glossary**，把缩写抽成合并表（**`locked`** 来自 `private/glossary.seed.yaml`，**`provisional`** 由模型增量写入）。同一张表会注入 **reviewer / editor / critic** 的提示，减少前后文乱改缩写。仅在**外层第 0 轮**、**每节各抽一次**。若不想多耗 LLM，在 YAML 设 **`glossary.enabled: false`**。实现见 [`glossary_merge.py`](glossary_merge.py)、**[docs/local-runner.md](docs/local-runner.md)**、[`config/local.example.yaml`](config/local.example.yaml)。
+- **术语表 Glossary（内置默认开启）：** 每个 `\section` 在审稿前可增加一步 **glossary**，把缩写抽成合并表（**`locked`** 来自 `private/glossary.seed.yaml`，**`provisional`** 由模型增量写入）。同一张表会注入 **reviewer / editor / critic** 的提示，减少前后文乱改缩写。仅在**外层第 0 轮**、**每节各抽一次**。若不想多耗 LLM，在 YAML 设 **`glossary.enabled: false`**。实现见 [`glossary_merge.py`](glossary_merge.py)、**[contrib/private/README.md](contrib/private/README.md)**、[`config/local.example.yaml`](config/local.example.yaml)。
 - **Ollama 稳定性：** 对断流、**502/503/504** 等传输错误做**有限次重试**；仍可调 **`num_predict`**、JSON 解析重试等应对长节。
-- **私稿运行说明：** **[docs/local-runner.md](docs/local-runner.md)** 补充 bat 编码、conda 路径、长文 Ollama 报错处理等。
+- **私稿运行说明：** **[contrib/private/README.md](contrib/private/README.md)** 补充 bat 编码、conda 路径、长文 Ollama 报错处理等。
 
 ## 能做什么
 
@@ -69,7 +58,7 @@ conda env create -f environment.yml
 conda activate <environment.yml 中的 name>
 ```
 
-更新依赖：`conda env update -f environment.yml`。在 **Windows** 上可不先激活，直接：**`.\scripts\conda_run.ps1 python -m pytest tests/ -q`**。编辑器任务模板见 **`templates/vscode/`**（复制到本地 `.vscode/`，说明见 **`templates/vscode/README.md`**）。
+更新依赖：`conda env update -f environment.yml`。在 **Windows** 上可不先激活，直接：**`.\scripts\conda_run.ps1 python -m pytest tests/ -q`**。编辑器任务模板见 **`contrib/vscode/`**（复制到本地 `.vscode/`，说明见 **`contrib/vscode/README.md`**）。
 
 ## 首次配置
 
@@ -84,7 +73,7 @@ conda activate <environment.yml 中的 name>
 
 3. 配置 **`input_path` / `output_path`**，或使用命令行 **`--input` / `--output`**。示例稿为 **`sample_manuscript.tex`**。
 
-4. **Glossary（内置配置默认 `enabled: true`）：** 文件在 **`private/`**（gitignore）。可将 **[examples/glossary.seed.example.yaml](examples/glossary.seed.example.yaml)** 复制为 **`private/glossary.seed.yaml`** 填写 **`locked:`**；**`private/glossary.merged.yaml`** 在 **`persist_merged_after_merge: true`** 时会更新。不需要术语表时在 YAML 设 **`glossary.enabled: false`**。
+4. **Glossary（内置配置默认 `enabled: true`）：** 文件在 **`private/`**（gitignore）。可将 **[contrib/private/glossary.seed.example.yaml](contrib/private/glossary.seed.example.yaml)** 复制为 **`private/glossary.seed.yaml`** 填写 **`locked:`**；**`private/glossary.merged.yaml`** 在 **`persist_merged_after_merge: true`** 时会更新。不需要术语表时在 YAML 设 **`glossary.enabled: false`**。
 
 ## 运行示例
 
@@ -112,21 +101,10 @@ python run_demo.py
 python run.py --version
 ```
 
-## 图形界面（本机 Web）
-
-安装 Web 依赖后启动暗色控制台（默认 **http://127.0.0.1:7860/**）：
-
-```bash
-python -m pip install fastapi "uvicorn[standard]"
-python web_app.py
-```
-
-在页面里填写路径、选择模式并点击「开始润色」；可实时看日志、预览输出与术语表。详见 **[docs/web-ui.md](docs/web-ui.md)**。
-
 ## 自己的论文与私稿目录
 
 - 使用 **`--input` / `--output`** 或 YAML 中的路径字段。
-- **Windows 双击：** 在仓库根使用 **`private/`**（由 **`.gitignore`** 中 **`/private/`** 忽略）。从 **`examples/`** 复制 `run_config.example.yaml`、`run_my_paper.bat.example` 到 **`private/`**；**`input_path` 相对路径以仓库根为基准**（不是相对 `private/`）。详见 **[docs/local-runner.md](docs/local-runner.md)**（编码、`conda.exe` 与 **`CONDA_EXE_PATH`** 等）。
+- **Windows 双击：** 在仓库根使用 **`private/`**（由 **`.gitignore`** 中 **`/private/`** 忽略）。放置 **`run_my_paper.bat`**、**`run_config.yaml`**；**`input_path` 相对路径以仓库根为基准**（不是相对 `private/`）。详见 **[contrib/private/README.md](contrib/private/README.md)**（编码、`conda.exe` 与 **`CONDA_EXE_PATH`** 等）。
 - 本地私稿请在 **`.gitignore`** 中增加规则，避免误提交。
 
 ## 编辑风格（`mode`）
@@ -201,7 +179,7 @@ python web_app.py
 | 很慢 / 超时 | 调整或去掉 `llm.request_timeout`；若 JSON 被截断可增大 `num_predict`。 |
 | 终端里 TeX 显示不全 | 以输出 `.tex` 文件为准。 |
 | Editor JSON / 某节被跳过 | 缩短小节、换更守 JSON 的模型、调大 `num_predict` 或重试相关配置。 |
-| Windows bat / conda 异常 | 见 **[docs/local-runner.md](docs/local-runner.md)**。 |
+| Windows bat / conda 异常 | 见 **[contrib/private/README.md](contrib/private/README.md)**。 |
 
 ## 开发
 

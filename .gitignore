@@ -24,15 +24,12 @@ config/local.yaml
 *.manuscript.private.tex
 draft.local.tex
 
-# IDE settings (entire folder — never commit machine paths; see templates/vscode/)
+# IDE settings (entire folder — never commit machine paths; see contrib/vscode/)
 .idea/
 .vscode/
 
-# Local runner only at repo root (anchored /private/; do not use unanchored ``private/``).
+# Private runner：仅仓库根下 ``private/``（勿用无斜杠 ``private/``，否则会误忽略 ``contrib/private/``）/ only root ``private/``; unanchored ``private/`` would ignore ``contrib/private/``.
 /private/
-
-# Local investigation / error reports (not for version control)
-local-reports/
 
 # Test and tooling caches
 .pytest_cache/
@@ -53,25 +50,3 @@ outputNotes.bib
 # OS files
 .DS_Store
 Thumbs.db
-
-#Cursor history
- .cursorindexingignore
-
-#Reference for Vibe-coding agent
-AGENTS.md
-
-#Migration of local warehouse content
-APPLY_FOR_COLLABORATOR.md
-DELETED_PATHS.txt
-FILES_MANIFEST.txt
-patches/
-
-
-#Guidance for  myself
-TESTING_GUIDE.md
-
-#Git management tool
-scripts/rewrite-history-for-public.ps1
-
-#others
-fix_append.py

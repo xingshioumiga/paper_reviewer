@@ -15,7 +15,7 @@
 
 .EXAMPLE
   cd path\to\paper_reviewer
-  .\scripts\rewrite-history-for-public.ps1 -OriginUrl "https://github.com/YOUR_USER/YOUR_REPO.git"
+  .\contrib\rewrite-history-for-public.ps1 -OriginUrl "https://github.com/YOUR_USER/YOUR_REPO.git"
 #>
 
 param(
