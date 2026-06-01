@@ -886,7 +886,10 @@ def glossary_node_llm(state: GraphState) -> GraphState:
 
     if llm_structured_glossary is None:
         logger.warning("glossary_node_llm: llm_structured_glossary is None, skipping extract")
-        state.glossary_extracted_section_ids.append(section.id)
+        state.glossary_extracted_section_ids = [
+            *state.glossary_extracted_section_ids,
+            section.id,
+        ]
         return state
 
     try:
@@ -921,7 +924,10 @@ def glossary_node_llm(state: GraphState) -> GraphState:
         state.llm_failure_count += 1
         logger.error("glossary_node_llm failed: %s", e, exc_info=True)
 
-    state.glossary_extracted_section_ids.append(section.id)
+    state.glossary_extracted_section_ids = [
+        *state.glossary_extracted_section_ids,
+        section.id,
+    ]
 
     if _GLOSSARY_PERSIST.get("persist"):
         try:
@@ -1038,7 +1044,10 @@ def editor_node(state: GraphState):
     state.sections[state.current_section_index] = section
 
     # 先追加 history 占位；分数与采纳由 critic、aggregator 填写 / history placeholder; score/accept filled later.
-    state.history.append(
+    # Reassign the list rather than mutating it in-place. Some LangGraph state
+    # merge paths do not reliably observe nested Pydantic list mutation.
+    state.history = [
+        *state.history,
         HistoryItem(
             iteration=state.iteration,
             section_id=section.id,
@@ -1046,8 +1055,8 @@ def editor_node(state: GraphState):
             after=new_content,
             score=0.0,          # critic 后更新 / updated by critic
             accepted=False      # aggregator 决定 / decided by aggregator
-        )
-    )
+        ),
+    ]
     logger.info(
         "editor_node: section_id=%s issues_applied=%s history_len=%s "
         "progress=%s/%s section=%s/%s elapsed=%.2fs",
@@ -1072,15 +1081,17 @@ def editor_node_llm(state: GraphState):
     # 无 issues 时仍写一条 history，便于 critic 对齐 / no issues: still append history for critic alignment.
     if not current_section_issues:
         logger.info("editor_node: section_id=%s no issues to fix, skipping.", section.id)
-        state.history.append(HistoryItem(
-            iteration=state.iteration,
-            section_id=section.id,
-            before=section.content,
-            after=section.content,   # 无文本改动 / no textual change
-            score=0.0,
-            accepted=False  # 无改动则不标记采纳 / not accepted without edits
-        ))  # 仍需 history 以便 critic 有上下文 / history kept for critic context
-        
+        state.history = [
+            *state.history,
+            HistoryItem(
+                iteration=state.iteration,
+                section_id=section.id,
+                before=section.content,
+                after=section.content,   # 无文本改动 / no textual change
+                score=0.0,
+                accepted=False  # 无改动则不标记采纳 / not accepted without edits
+            ),
+        ]
         return state
 
     issues_text = "\n".join([
@@ -1135,20 +1146,24 @@ def editor_node_llm(state: GraphState):
         state.sections[state.current_section_index] = section
         
         # 追加 editor 历史项 / append editor history item.
-        state.history.append(HistoryItem(
-            iteration=state.iteration,
-            section_id=section.id,
-            before=old_content,
-            after=refined_content,
-            score=0.0,
-            accepted=False
-        ))
+        state.history = [
+            *state.history,
+            HistoryItem(
+                iteration=state.iteration,
+                section_id=section.id,
+                before=old_content,
+                after=refined_content,
+                score=0.0,
+                accepted=False,
+            ),
+        ]
 
     except Exception as e:
         logger.error("editor_node_llm failed: %s", e, exc_info=True)
         # 占位 history + 跳过后续 reviewer，避免 critic 误用旧 history / placeholder history + skip; avoids critic using stale history[-1].
         body = section.content
-        state.history.append(
+        state.history = [
+            *state.history,
             HistoryItem(
                 iteration=state.iteration,
                 section_id=section.id,
@@ -1156,8 +1171,8 @@ def editor_node_llm(state: GraphState):
                 after=body,
                 score=0.0,
                 accepted=False,
-            )
-        )
+            ),
+        ]
         if section.id not in state.skipped_section_ids:
             state.skipped_section_ids.append(section.id)
         if section.id not in state.editor_skipped_section_ids:

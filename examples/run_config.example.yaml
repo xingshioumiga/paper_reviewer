@@ -1,0 +1,35 @@
+# Copy to ``private/run_config.yaml`` (gitignored) for double-click bat or:
+#   python run.py --config private/run_config.yaml
+# 复制到仓库根 ``private/run_config.yaml``。勿提交含密钥或私稿路径的本机副本。
+
+# Relative paths are from the repo root (where run.py lives), not from private/.
+input_path: my_real_paper.tex
+output_path: output.tex
+
+mode: proofread
+max_iterations: 1
+max_no_improve: 100
+log_level: INFO
+log_dir: logs
+ollama_healthcheck: true
+
+glossary:
+  enabled: true
+  seed_path: private/glossary.seed.yaml
+  merged_path: private/glossary.merged.yaml
+  bootstrap_provisional_from_merged: true
+  persist_merged_after_merge: true
+
+llm:
+  backend: ollama_native
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  reviewer:
+    model: qwen2.5:14b
+    temperature: 0.1
+  editor:
+    model: qwen2.5:14b
+    temperature: 0.7
+  critic:
+    model: qwen2.5:14b
+    temperature: 0.0

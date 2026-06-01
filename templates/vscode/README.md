@@ -29,13 +29,13 @@ conda activate AIagent1
 
 ```powershell
 New-Item -ItemType Directory -Force .vscode | Out-Null
-Copy-Item -Path contrib\vscode\*.json -Destination .vscode\ -Force
+Copy-Item -Path templates\vscode\*.json -Destination .vscode\ -Force
 ```
 
 **macOS / Linux:**
 
 ```bash
-mkdir -p .vscode && cp contrib/vscode/*.json .vscode/
+mkdir -p .vscode && cp templates/vscode/*.json .vscode/
 ```
 
 ---
@@ -65,4 +65,4 @@ Windows PowerShell：
 
 ---
 
-To **erase `.vscode` from all past commits** before pushing to GitHub, run `contrib/rewrite-history-for-public.ps1` (requires `git-filter-repo`) or see comments inside that script.
+To **erase `.vscode` from all past commits** before pushing to GitHub, run `scripts/rewrite-history-for-public.ps1` (requires `git-filter-repo`) or see comments inside that script.
