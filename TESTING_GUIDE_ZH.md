@@ -69,13 +69,13 @@
 
 ### 方式 B：一键任务（推荐）
 
-将 `templates/vscode/tasks.json` 复制到 `.vscode/tasks.json` 后，可在 VS Code / Cursor 里运行任务：
+将 `contrib/vscode/tasks.json` 复制到 `.vscode/tasks.json` 后，可在 VS Code / Cursor 里运行任务：
 
 - `Run Tests`
 
 ### 方式 C：调试测试
 
-将 `templates/vscode/launch.json` 复制到 `.vscode/launch.json` 后，可直接启动调试：
+将 `contrib/vscode/launch.json` 复制到 `.vscode/launch.json` 后，可直接启动调试：
 
 - `Run Pytest`
 
